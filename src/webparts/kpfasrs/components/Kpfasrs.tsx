@@ -31,6 +31,7 @@ interface IExportToSRSItem {
   StaffGroupId: number;
   Condition: number;
   GroupMemberId: number;
+  PathForSRSFile: string; // Добавлено новое поле
 }
 
 // Интерфейс для данных из списка StaffRecords
@@ -47,10 +48,9 @@ interface IStaffRecordsItem {
   };
   Checked: number;
   ExportResult: number;
-  // Новые поля
   ShiftDate1: string;
   ShiftDate2: string;
-  TimeForLunch: number;  // Исправлено с LunchTime на TimeForLunch
+  TimeForLunch: number;
   Contract: number;
   TypeOfLeaveId: number;
   TypeOfLeave?: {
@@ -90,7 +90,8 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     { key: 'manager', name: 'Manager', fieldName: 'ManagerId', minWidth: 100, maxWidth: 150 },
     { key: 'staffGroup', name: 'Staff Group', fieldName: 'StaffGroupId', minWidth: 100, maxWidth: 150 },
     { key: 'condition', name: 'Condition', fieldName: 'Condition', minWidth: 100, maxWidth: 150 },
-    { key: 'groupMember', name: 'Group Member', fieldName: 'GroupMemberId', minWidth: 100, maxWidth: 150 }
+    { key: 'groupMember', name: 'Group Member', fieldName: 'GroupMemberId', minWidth: 100, maxWidth: 150 },
+    { key: 'pathForSRSFile', name: 'Path For SRS File', fieldName: 'PathForSRSFile', minWidth: 200, maxWidth: 300 } // Добавлена новая колонка
   ];
 
   // Определение колонок для StaffRecords с добавленными полями
@@ -105,7 +106,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     { key: 'staffGroup', name: 'Staff Group', fieldName: 'StaffGroupId', minWidth: 100, maxWidth: 150 },
     { key: 'typeOfLeave', name: 'Type Of Leave', fieldName: 'TypeOfLeaveId', minWidth: 100, maxWidth: 150 },
     { key: 'contract', name: 'Contract', fieldName: 'Contract', minWidth: 80, maxWidth: 100 },
-    { key: 'timeForLunch', name: 'Time For Lunch', fieldName: 'TimeForLunch', minWidth: 100, maxWidth: 120 },  // Исправлено
+    { key: 'timeForLunch', name: 'Time For Lunch', fieldName: 'TimeForLunch', minWidth: 100, maxWidth: 120 },
     { key: 'leaveTime', name: 'Leave Time', fieldName: 'LeaveTime', minWidth: 80, maxWidth: 100 },
     { key: 'reliefHours', name: 'Relief Hours', fieldName: 'ReliefHours', minWidth: 80, maxWidth: 100 },
     { key: 'leaveNote', name: 'Leave Note', fieldName: 'LeaveNote', minWidth: 120, maxWidth: 200 },
@@ -141,7 +142,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
         console.log('Fetching data from ExportToSRS list at:', kpfaDataUrl);
         
         const endpoint = `${kpfaDataUrl}/_api/web/lists/getbytitle('ExportToSRS')/items`;
-        const select = "Id,Title,StaffMemberId,Date1,Date2,ManagerId,StaffGroupId,Condition,GroupMemberId";
+        const select = "Id,Title,StaffMemberId,Date1,Date2,ManagerId,StaffGroupId,Condition,GroupMemberId,PathForSRSFile"; // Добавлено новое поле
         const queryUrl = `${endpoint}?$select=${select}`;
         
         const response: SPHttpClientResponse = await props.context.spHttpClient.get(
@@ -183,7 +184,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
       // URL для первого запроса
       let endpoint = `${kpfaDataUrl}/_api/web/lists/getbytitle('StaffRecords')/items`;
       const select = "Id,Title,Date,StaffMemberId,StaffMember/Id,StaffMember/Title,ManagerId,StaffGroupId," +
-                    "Checked,ExportResult,ShiftDate1,ShiftDate2,TimeForLunch,Contract,TypeOfLeaveId,TypeOfLeave/Id," +  // Исправлено
+                    "Checked,ExportResult,ShiftDate1,ShiftDate2,TimeForLunch,Contract,TypeOfLeaveId,TypeOfLeave/Id," +
                     "TypeOfLeave/Title,LeaveTime,LeaveNote,LunchNote,TotalHoursNote,ReliefHours";
       const expand = "StaffMember,TypeOfLeave";
       let queryUrl = `${endpoint}?$select=${select}&$expand=${expand}&$top=5000`; // Увеличиваем лимит до 5000 (максимум для SharePoint)
@@ -254,102 +255,101 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     }
   };
 
-  // Функция для создания групп на основе дат
-// Функция для проверки, является ли смена "пустой" (время 00:00)
-const isEmptyShift = (record: IStaffRecordsItem): boolean => {
-  const shiftDate1 = record.ShiftDate1 || '';
-  const shiftDate2 = record.ShiftDate2 || '';
-  
-  // Используем indexOf вместо endsWith для лучшей совместимости
-  const isShiftDate1Empty = shiftDate1.indexOf('T00:00:00Z') === shiftDate1.length - 10 || 
-                          shiftDate1.indexOf('T00:00:00') === shiftDate1.length - 9;
-  
-  const isShiftDate2Empty = shiftDate2.indexOf('T00:00:00Z') === shiftDate2.length - 10 || 
-                          shiftDate2.indexOf('T00:00:00') === shiftDate2.length - 9;
-  
-  return isShiftDate1Empty && isShiftDate2Empty;
-};
-
-// Функция для создания групп на основе дат
-const createGroupsFromRecords = (records: IStaffRecordsItem[]): void => {
-  if (!records || records.length === 0) {
-    setStaffRecordsGroups([]);
-    return;
-  }
-  
-  // Сортируем записи по дате для группировки
-  const recordsByDate = [...records].sort((a, b) => {
-    const dateA = new Date(a.Date);
-    const dateB = new Date(b.Date);
-    return dateA.getTime() - dateB.getTime();
-  });
-  
-  // Группируем записи по дате
-  const recordGroups: { [key: string]: IStaffRecordsItem[] } = {};
-  recordsByDate.forEach(record => {
-    // Извлекаем только дату без времени
-    const datePart = record.Date.split('T')[0];
+  // Функция для проверки, является ли смена "пустой" (время 00:00)
+  const isEmptyShift = (record: IStaffRecordsItem): boolean => {
+    const shiftDate1 = record.ShiftDate1 || '';
+    const shiftDate2 = record.ShiftDate2 || '';
     
-    if (!recordGroups[datePart]) {
-      recordGroups[datePart] = [];
+    // Используем indexOf вместо endsWith для лучшей совместимости
+    const isShiftDate1Empty = shiftDate1.indexOf('T00:00:00Z') === shiftDate1.length - 10 || 
+                            shiftDate1.indexOf('T00:00:00') === shiftDate1.length - 9;
+    
+    const isShiftDate2Empty = shiftDate2.indexOf('T00:00:00Z') === shiftDate2.length - 10 || 
+                            shiftDate2.indexOf('T00:00:00') === shiftDate2.length - 9;
+    
+    return isShiftDate1Empty && isShiftDate2Empty;
+  };
+
+  // Функция для создания групп на основе дат
+  const createGroupsFromRecords = (records: IStaffRecordsItem[]): void => {
+    if (!records || records.length === 0) {
+      setStaffRecordsGroups([]);
+      return;
     }
     
-    recordGroups[datePart].push(record);
-  });
-  
-  // Сортируем записи внутри каждой группы:
-  // - Сначала по ShiftDate1
-  // - Пустые смены в конце
-  Object.keys(recordGroups).forEach(date => {
-    recordGroups[date].sort((a, b) => {
-      // Проверяем, является ли какая-либо из смен "пустой"
-      const aEmpty = isEmptyShift(a);
-      const bEmpty = isEmptyShift(b);
-      
-      // Если одна пустая, а другая нет, пустая идет в конец
-      if (aEmpty && !bEmpty) return 1;
-      if (!aEmpty && bEmpty) return -1;
-      
-      // Если обе пустые или обе не пустые, сортируем по ShiftDate1
-      const timeA = new Date(a.ShiftDate1 || a.Date).getTime();
-      const timeB = new Date(b.ShiftDate1 || b.Date).getTime();
-      return timeA - timeB;
-    });
-  });
-  
-  // Готовим отсортированный массив всех записей
-  const sortedRecords: IStaffRecordsItem[] = [];
-  const dates = Object.keys(recordGroups).sort(); // Сортируем даты
-  
-  dates.forEach(date => {
-    sortedRecords.push(...recordGroups[date]);
-  });
-  
-  // Сохраняем отсортированные записи
-  setFilteredStaffRecords(sortedRecords);
-  
-  // Создаем группы для DetailsList
-  const groups: IGroup[] = [];
-  let startIndex = 0;
-  
-  dates.forEach(date => {
-    const count = recordGroups[date].length;
-    
-    groups.push({
-      key: date,
-      name: formatDate(date),
-      startIndex,
-      count,
-      level: 0,
-      isCollapsed: false
+    // Сортируем записи по дате для группировки
+    const recordsByDate = [...records].sort((a, b) => {
+      const dateA = new Date(a.Date);
+      const dateB = new Date(b.Date);
+      return dateA.getTime() - dateB.getTime();
     });
     
-    startIndex += count;
-  });
-  
-  console.log('Created groups with custom sorting:', groups);
-  setStaffRecordsGroups(groups);
-};
+    // Группируем записи по дате
+    const recordGroups: { [key: string]: IStaffRecordsItem[] } = {};
+    recordsByDate.forEach(record => {
+      // Извлекаем только дату без времени
+      const datePart = record.Date.split('T')[0];
+      
+      if (!recordGroups[datePart]) {
+        recordGroups[datePart] = [];
+      }
+      
+      recordGroups[datePart].push(record);
+    });
+    
+    // Сортируем записи внутри каждой группы:
+    // - Сначала по ShiftDate1
+    // - Пустые смены в конце
+    Object.keys(recordGroups).forEach(date => {
+      recordGroups[date].sort((a, b) => {
+        // Проверяем, является ли какая-либо из смен "пустой"
+        const aEmpty = isEmptyShift(a);
+        const bEmpty = isEmptyShift(b);
+        
+        // Если одна пустая, а другая нет, пустая идет в конец
+        if (aEmpty && !bEmpty) return 1;
+        if (!aEmpty && bEmpty) return -1;
+        
+        // Если обе пустые или обе не пустые, сортируем по ShiftDate1
+        const timeA = new Date(a.ShiftDate1 || a.Date).getTime();
+        const timeB = new Date(b.ShiftDate1 || b.Date).getTime();
+        return timeA - timeB;
+      });
+    });
+    
+    // Готовим отсортированный массив всех записей
+    const sortedRecords: IStaffRecordsItem[] = [];
+    const dates = Object.keys(recordGroups).sort(); // Сортируем даты
+    
+    dates.forEach(date => {
+      sortedRecords.push(...recordGroups[date]);
+    });
+    
+    // Сохраняем отсортированные записи
+    setFilteredStaffRecords(sortedRecords);
+    
+    // Создаем группы для DetailsList
+    const groups: IGroup[] = [];
+    let startIndex = 0;
+    
+    dates.forEach(date => {
+      const count = recordGroups[date].length;
+      
+      groups.push({
+        key: date,
+        name: formatDate(date),
+        startIndex,
+        count,
+        level: 0,
+        isCollapsed: false
+      });
+      
+      startIndex += count;
+    });
+    
+    console.log('Created groups with custom sorting:', groups);
+    setStaffRecordsGroups(groups);
+  };
   
   // Функция для форматирования даты
   const formatDate = (dateString: string): string => {
@@ -380,7 +380,8 @@ const createGroupsFromRecords = (records: IStaffRecordsItem[]): void => {
       Date2: selectedExportItem.Date2,
       ManagerId: selectedExportItem.ManagerId,
       StaffGroupId: selectedExportItem.StaffGroupId,
-      StaffMemberId: selectedExportItem.StaffMemberId
+      StaffMemberId: selectedExportItem.StaffMemberId,
+      PathForSRSFile: selectedExportItem.PathForSRSFile // Добавлено отображение нового поля
     });
     
     setIsLoadingStaffRecords(true);
@@ -457,6 +458,7 @@ const createGroupsFromRecords = (records: IStaffRecordsItem[]): void => {
       debugLines.push(`Записей, соответствующих условию по ManagerId (${selectedExportItem.ManagerId}): ${matchingManager.length}`);
       debugLines.push(`Записей, соответствующих условию по StaffGroupId (${selectedExportItem.StaffGroupId}): ${matchingGroup.length}`);
       debugLines.push(`Записей, соответствующих условию по StaffMemberId (${selectedExportItem.StaffMemberId}): ${matchingStaffMember.length}`);
+      debugLines.push(`Path For SRS File: ${selectedExportItem.PathForSRSFile || 'Not specified'}`); // Добавлено отображение нового поля
       
       // Применяем все условия фильтрации
       const filtered = records.filter((record: IStaffRecordsItem) => {
@@ -488,7 +490,7 @@ const createGroupsFromRecords = (records: IStaffRecordsItem[]): void => {
         debugLines.push(`- StaffMemberId: ${filtered[0].StaffMemberId}`);
         debugLines.push(`- TypeOfLeaveId: ${filtered[0].TypeOfLeaveId}`);
         debugLines.push(`- Contract: ${filtered[0].Contract}`);
-        debugLines.push(`- TimeForLunch: ${filtered[0].TimeForLunch}`);  // Исправлено
+        debugLines.push(`- TimeForLunch: ${filtered[0].TimeForLunch}`);
         debugLines.push(`- LeaveTime: ${filtered[0].LeaveTime}`);
         debugLines.push(`- ReliefHours: ${filtered[0].ReliefHours}`);
         debugLines.push(`- LeaveNote: ${filtered[0].LeaveNote ? filtered[0].LeaveNote.substring(0, 30) + '...' : ''}`);
