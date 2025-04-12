@@ -255,70 +255,101 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
   };
 
   // Функция для создания групп на основе дат
-  const createGroupsFromRecords = (records: IStaffRecordsItem[]): void => {
-    if (!records || records.length === 0) {
-      setStaffRecordsGroups([]);
-      return;
+// Функция для проверки, является ли смена "пустой" (время 00:00)
+const isEmptyShift = (record: IStaffRecordsItem): boolean => {
+  const shiftDate1 = record.ShiftDate1 || '';
+  const shiftDate2 = record.ShiftDate2 || '';
+  
+  // Используем indexOf вместо endsWith для лучшей совместимости
+  const isShiftDate1Empty = shiftDate1.indexOf('T00:00:00Z') === shiftDate1.length - 10 || 
+                          shiftDate1.indexOf('T00:00:00') === shiftDate1.length - 9;
+  
+  const isShiftDate2Empty = shiftDate2.indexOf('T00:00:00Z') === shiftDate2.length - 10 || 
+                          shiftDate2.indexOf('T00:00:00') === shiftDate2.length - 9;
+  
+  return isShiftDate1Empty && isShiftDate2Empty;
+};
+
+// Функция для создания групп на основе дат
+const createGroupsFromRecords = (records: IStaffRecordsItem[]): void => {
+  if (!records || records.length === 0) {
+    setStaffRecordsGroups([]);
+    return;
+  }
+  
+  // Сортируем записи по дате для группировки
+  const recordsByDate = [...records].sort((a, b) => {
+    const dateA = new Date(a.Date);
+    const dateB = new Date(b.Date);
+    return dateA.getTime() - dateB.getTime();
+  });
+  
+  // Группируем записи по дате
+  const recordGroups: { [key: string]: IStaffRecordsItem[] } = {};
+  recordsByDate.forEach(record => {
+    // Извлекаем только дату без времени
+    const datePart = record.Date.split('T')[0];
+    
+    if (!recordGroups[datePart]) {
+      recordGroups[datePart] = [];
     }
     
-    // Сортируем записи по дате и времени
-    const sortedRecords = [...records].sort((a, b) => {
-      const dateA = new Date(a.Date);
-      const dateB = new Date(b.Date);
-      return dateA.getTime() - dateB.getTime();
-    });
-    
-    // Сохраняем отсортированные записи
-    setFilteredStaffRecords(sortedRecords);
-    
-    // Находим уникальные даты (без времени)
-    const uniqueDates: { [key: string]: number } = {};
-    let startIndex = 0;
-    
-    sortedRecords.forEach((record, index) => {
-      // Извлекаем только дату без времени
-      const datePart = record.Date.split('T')[0];
+    recordGroups[datePart].push(record);
+  });
+  
+  // Сортируем записи внутри каждой группы:
+  // - Сначала по ShiftDate1
+  // - Пустые смены в конце
+  Object.keys(recordGroups).forEach(date => {
+    recordGroups[date].sort((a, b) => {
+      // Проверяем, является ли какая-либо из смен "пустой"
+      const aEmpty = isEmptyShift(a);
+      const bEmpty = isEmptyShift(b);
       
-      if (!uniqueDates[datePart]) {
-        // Если эта дата встречается впервые, создаем новую группу
-        uniqueDates[datePart] = index;
-        
-        // Если это не первая запись, устанавливаем count для предыдущей группы
-        if (Object.keys(uniqueDates).length > 1) {
-          const previousDate = Object.keys(uniqueDates)[Object.keys(uniqueDates).length - 2];
-          uniqueDates[previousDate] = index - startIndex;
-          startIndex = index;
-        }
-      }
-    });
-    
-    // Устанавливаем count для последней группы
-    const lastDate = Object.keys(uniqueDates)[Object.keys(uniqueDates).length - 1];
-    if (lastDate) {
-      uniqueDates[lastDate] = sortedRecords.length - uniqueDates[lastDate];
-    }
-    
-    // Создаем массив групп
-    const groups: IGroup[] = Object.keys(uniqueDates).map((date, index) => {
-      const startIndex = index === 0 ? 0 : 
-        Object.keys(uniqueDates)
-          .slice(0, index)
-          .map(date => uniqueDates[date] as number)
-          .reduce((sum: number, count: number) => sum + count, 0);
+      // Если одна пустая, а другая нет, пустая идет в конец
+      if (aEmpty && !bEmpty) return 1;
+      if (!aEmpty && bEmpty) return -1;
       
-      return {
-        key: date,
-        name: formatDate(date), // Функция для форматирования даты
-        startIndex: startIndex,
-        count: uniqueDates[date] as number,
-        level: 0,
-        isCollapsed: false
-      };
+      // Если обе пустые или обе не пустые, сортируем по ShiftDate1
+      const timeA = new Date(a.ShiftDate1 || a.Date).getTime();
+      const timeB = new Date(b.ShiftDate1 || b.Date).getTime();
+      return timeA - timeB;
+    });
+  });
+  
+  // Готовим отсортированный массив всех записей
+  const sortedRecords: IStaffRecordsItem[] = [];
+  const dates = Object.keys(recordGroups).sort(); // Сортируем даты
+  
+  dates.forEach(date => {
+    sortedRecords.push(...recordGroups[date]);
+  });
+  
+  // Сохраняем отсортированные записи
+  setFilteredStaffRecords(sortedRecords);
+  
+  // Создаем группы для DetailsList
+  const groups: IGroup[] = [];
+  let startIndex = 0;
+  
+  dates.forEach(date => {
+    const count = recordGroups[date].length;
+    
+    groups.push({
+      key: date,
+      name: formatDate(date),
+      startIndex,
+      count,
+      level: 0,
+      isCollapsed: false
     });
     
-    console.log('Created groups:', groups);
-    setStaffRecordsGroups(groups);
-  };
+    startIndex += count;
+  });
+  
+  console.log('Created groups with custom sorting:', groups);
+  setStaffRecordsGroups(groups);
+};
   
   // Функция для форматирования даты
   const formatDate = (dateString: string): string => {
