@@ -11,7 +11,10 @@ import {
   MessageBarType,
   Selection,
   Spinner,
-  SpinnerSize
+  SpinnerSize,
+  IGroup,
+  GroupHeader,
+  IGroupHeaderProps
 } from '@fluentui/react';
 
 // URL вашего сайта SharePoint
@@ -42,6 +45,23 @@ interface IStaffRecordsItem {
     Id: number;
     Title: string;
   };
+  Checked: number;
+  ExportResult: number;
+  // Новые поля
+  ShiftDate1: string;
+  ShiftDate2: string;
+  TimeForLunch: number;  // Исправлено с LunchTime на TimeForLunch
+  Contract: number;
+  TypeOfLeaveId: number;
+  TypeOfLeave?: {
+    Id: number;
+    Title: string;
+  };
+  LeaveTime: number;
+  LeaveNote: string;
+  LunchNote: string;
+  TotalHoursNote: string;
+  ReliefHours: number;
 }
 
 const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
@@ -52,6 +72,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
   // Состояния для StaffRecords
   const [staffRecords, setStaffRecords] = useState<IStaffRecordsItem[]>([]);
   const [filteredStaffRecords, setFilteredStaffRecords] = useState<IStaffRecordsItem[]>([]);
+  const [staffRecordsGroups, setStaffRecordsGroups] = useState<IGroup[]>([]);
   const [isLoadingStaffRecords, setIsLoadingStaffRecords] = useState<boolean>(false);
   const [selectedItem, setSelectedItem] = useState<IExportToSRSItem | null>(null);
   
@@ -72,15 +93,28 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     { key: 'groupMember', name: 'Group Member', fieldName: 'GroupMemberId', minWidth: 100, maxWidth: 150 }
   ];
 
-  // Определение колонок для StaffRecords
-const staffRecordsColumns: IColumn[] = [
-  { key: 'id', name: 'ID', fieldName: 'Id', minWidth: 50, maxWidth: 50 },
-  { key: 'title', name: 'Title', fieldName: 'Title', minWidth: 100, maxWidth: 150 },
-  { key: 'date', name: 'Date', fieldName: 'Date', minWidth: 100, maxWidth: 150 },
-  { key: 'staffMember', name: 'Staff Member', fieldName: 'StaffMemberId', minWidth: 100, maxWidth: 150 },
-  { key: 'manager', name: 'Manager', fieldName: 'ManagerId', minWidth: 100, maxWidth: 150 },
-  { key: 'staffGroup', name: 'Staff Group', fieldName: 'StaffGroupId', minWidth: 100, maxWidth: 150 }
-];
+  // Определение колонок для StaffRecords с добавленными полями
+  const staffRecordsColumns: IColumn[] = [
+    { key: 'id', name: 'ID', fieldName: 'Id', minWidth: 50, maxWidth: 50 },
+    { key: 'title', name: 'Title', fieldName: 'Title', minWidth: 100, maxWidth: 150 },
+    { key: 'date', name: 'Date', fieldName: 'Date', minWidth: 100, maxWidth: 150 },
+    { key: 'shiftDate1', name: 'Shift Start', fieldName: 'ShiftDate1', minWidth: 120, maxWidth: 150 },
+    { key: 'shiftDate2', name: 'Shift End', fieldName: 'ShiftDate2', minWidth: 120, maxWidth: 150 },
+    { key: 'staffMember', name: 'Staff Member', fieldName: 'StaffMemberId', minWidth: 100, maxWidth: 150 },
+    { key: 'manager', name: 'Manager', fieldName: 'ManagerId', minWidth: 100, maxWidth: 150 },
+    { key: 'staffGroup', name: 'Staff Group', fieldName: 'StaffGroupId', minWidth: 100, maxWidth: 150 },
+    { key: 'typeOfLeave', name: 'Type Of Leave', fieldName: 'TypeOfLeaveId', minWidth: 100, maxWidth: 150 },
+    { key: 'contract', name: 'Contract', fieldName: 'Contract', minWidth: 80, maxWidth: 100 },
+    { key: 'timeForLunch', name: 'Time For Lunch', fieldName: 'TimeForLunch', minWidth: 100, maxWidth: 120 },  // Исправлено
+    { key: 'leaveTime', name: 'Leave Time', fieldName: 'LeaveTime', minWidth: 80, maxWidth: 100 },
+    { key: 'reliefHours', name: 'Relief Hours', fieldName: 'ReliefHours', minWidth: 80, maxWidth: 100 },
+    { key: 'leaveNote', name: 'Leave Note', fieldName: 'LeaveNote', minWidth: 120, maxWidth: 200 },
+    { key: 'lunchNote', name: 'Lunch Note', fieldName: 'LunchNote', minWidth: 120, maxWidth: 200 },
+    { key: 'totalHoursNote', name: 'Total Hours Note', fieldName: 'TotalHoursNote', minWidth: 120, maxWidth: 200 },
+    { key: 'checked', name: 'Checked', fieldName: 'Checked', minWidth: 80, maxWidth: 100 },
+    { key: 'exportResult', name: 'Export Result', fieldName: 'ExportResult', minWidth: 100, maxWidth: 120 }
+  ];
+
   // Создаем объект Selection для DetailsList
   const selection = new Selection({
     onSelectionChanged: () => {
@@ -92,6 +126,7 @@ const staffRecordsColumns: IColumn[] = [
       } else {
         setSelectedItem(null);
         setFilteredStaffRecords([]);
+        setStaffRecordsGroups([]);
       }
     }
   });
@@ -147,8 +182,10 @@ const staffRecordsColumns: IColumn[] = [
       
       // URL для первого запроса
       let endpoint = `${kpfaDataUrl}/_api/web/lists/getbytitle('StaffRecords')/items`;
-      const select = "Id,Title,Date,StaffMemberId,StaffMember/Id,StaffMember/Title,ManagerId,StaffGroupId";
-      const expand = "StaffMember";
+      const select = "Id,Title,Date,StaffMemberId,StaffMember/Id,StaffMember/Title,ManagerId,StaffGroupId," +
+                    "Checked,ExportResult,ShiftDate1,ShiftDate2,TimeForLunch,Contract,TypeOfLeaveId,TypeOfLeave/Id," +  // Исправлено
+                    "TypeOfLeave/Title,LeaveTime,LeaveNote,LunchNote,TotalHoursNote,ReliefHours";
+      const expand = "StaffMember,TypeOfLeave";
       let queryUrl = `${endpoint}?$select=${select}&$expand=${expand}&$top=5000`; // Увеличиваем лимит до 5000 (максимум для SharePoint)
       
       let nextLink: string | null = queryUrl;
@@ -217,6 +254,90 @@ const staffRecordsColumns: IColumn[] = [
     }
   };
 
+  // Функция для создания групп на основе дат
+  const createGroupsFromRecords = (records: IStaffRecordsItem[]): void => {
+    if (!records || records.length === 0) {
+      setStaffRecordsGroups([]);
+      return;
+    }
+    
+    // Сортируем записи по дате и времени
+    const sortedRecords = [...records].sort((a, b) => {
+      const dateA = new Date(a.Date);
+      const dateB = new Date(b.Date);
+      return dateA.getTime() - dateB.getTime();
+    });
+    
+    // Сохраняем отсортированные записи
+    setFilteredStaffRecords(sortedRecords);
+    
+    // Находим уникальные даты (без времени)
+    const uniqueDates: { [key: string]: number } = {};
+    let startIndex = 0;
+    
+    sortedRecords.forEach((record, index) => {
+      // Извлекаем только дату без времени
+      const datePart = record.Date.split('T')[0];
+      
+      if (!uniqueDates[datePart]) {
+        // Если эта дата встречается впервые, создаем новую группу
+        uniqueDates[datePart] = index;
+        
+        // Если это не первая запись, устанавливаем count для предыдущей группы
+        if (Object.keys(uniqueDates).length > 1) {
+          const previousDate = Object.keys(uniqueDates)[Object.keys(uniqueDates).length - 2];
+          uniqueDates[previousDate] = index - startIndex;
+          startIndex = index;
+        }
+      }
+    });
+    
+    // Устанавливаем count для последней группы
+    const lastDate = Object.keys(uniqueDates)[Object.keys(uniqueDates).length - 1];
+    if (lastDate) {
+      uniqueDates[lastDate] = sortedRecords.length - uniqueDates[lastDate];
+    }
+    
+    // Создаем массив групп
+    const groups: IGroup[] = Object.keys(uniqueDates).map((date, index) => {
+      const startIndex = index === 0 ? 0 : 
+        Object.keys(uniqueDates)
+          .slice(0, index)
+          .map(date => uniqueDates[date] as number)
+          .reduce((sum: number, count: number) => sum + count, 0);
+      
+      return {
+        key: date,
+        name: formatDate(date), // Функция для форматирования даты
+        startIndex: startIndex,
+        count: uniqueDates[date] as number,
+        level: 0,
+        isCollapsed: false
+      };
+    });
+    
+    console.log('Created groups:', groups);
+    setStaffRecordsGroups(groups);
+  };
+  
+  // Функция для форматирования даты
+  const formatDate = (dateString: string): string => {
+    const options: Intl.DateTimeFormatOptions = { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    };
+    
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('ru-RU', options);
+    } catch (e) {
+      console.error('Error formatting date:', dateString, e);
+      return dateString;
+    }
+  };
+
   // Функция для фильтрации StaffRecords на основе выбранной строки ExportToSRS
   const handleFilterStaffRecords = async (selectedExportItem: IExportToSRSItem): Promise<void> => {
     console.log('Filtering staff records for:', selectedExportItem);
@@ -243,6 +364,7 @@ const staffRecordsColumns: IColumn[] = [
       
       if (records.length === 0) {
         setFilteredStaffRecords([]);
+        setStaffRecordsGroups([]);
         setDebugInfo("Не удалось загрузить данные StaffRecords");
         return;
       }
@@ -328,23 +450,58 @@ const staffRecordsColumns: IColumn[] = [
         debugLines.push(`Пример записи, соответствующей всем условиям:`);
         debugLines.push(`- Id: ${filtered[0].Id}`);
         debugLines.push(`- Date: ${filtered[0].Date}`);
+        debugLines.push(`- ShiftDate1: ${filtered[0].ShiftDate1}`);
+        debugLines.push(`- ShiftDate2: ${filtered[0].ShiftDate2}`);
         debugLines.push(`- ManagerId: ${filtered[0].ManagerId}`);
         debugLines.push(`- StaffGroupId: ${filtered[0].StaffGroupId}`);
         debugLines.push(`- StaffMemberId: ${filtered[0].StaffMemberId}`);
+        debugLines.push(`- TypeOfLeaveId: ${filtered[0].TypeOfLeaveId}`);
+        debugLines.push(`- Contract: ${filtered[0].Contract}`);
+        debugLines.push(`- TimeForLunch: ${filtered[0].TimeForLunch}`);  // Исправлено
+        debugLines.push(`- LeaveTime: ${filtered[0].LeaveTime}`);
+        debugLines.push(`- ReliefHours: ${filtered[0].ReliefHours}`);
+        debugLines.push(`- LeaveNote: ${filtered[0].LeaveNote ? filtered[0].LeaveNote.substring(0, 30) + '...' : ''}`);
+        debugLines.push(`- Checked: ${filtered[0].Checked}`);
+        debugLines.push(`- ExportResult: ${filtered[0].ExportResult}`);
       }
       
       console.log(debugLines.join('\n'));
       setDebugInfo(debugLines.join('\n'));
       
       console.log(`Found ${filtered.length} matching StaffRecords with all conditions`);
-      setFilteredStaffRecords(filtered);
+      
+      // Создаем группы и сортируем результаты по дате
+      createGroupsFromRecords(filtered);
       
     } catch (error) {
       console.error('Error filtering records:', error);
       setError(`Ошибка при фильтрации записей: ${error.message}`);
+      setFilteredStaffRecords([]);
+      setStaffRecordsGroups([]);
     } finally {
       setIsLoadingStaffRecords(false);
     }
+  };
+
+  // Кастомный рендер для заголовка группы
+  const onRenderGroupHeader = (props?: IGroupHeaderProps): JSX.Element | null => {
+    if (!props) return null;
+    
+    return (
+      <GroupHeader 
+        {...props} 
+        styles={{ 
+          root: { 
+            backgroundColor: '#f0f0f0', 
+            fontWeight: 'bold',
+            padding: '10px 0'
+          },
+          title: {
+            fontSize: '14px'
+          }
+        }} 
+      />
+    );
   };
 
   return (
@@ -419,6 +576,11 @@ const staffRecordsColumns: IColumn[] = [
                               <DetailsList
                                 items={filteredStaffRecords}
                                 columns={staffRecordsColumns}
+                                groups={staffRecordsGroups}
+                                groupProps={{
+                                  showEmptyGroups: true,
+                                  onRenderHeader: onRenderGroupHeader
+                                }}
                                 selectionMode={SelectionMode.none}
                                 setKey="staffRecordsId"
                                 className={styles.detailsListWrapper}
