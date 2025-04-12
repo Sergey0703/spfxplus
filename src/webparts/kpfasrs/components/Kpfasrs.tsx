@@ -14,7 +14,8 @@ import {
   SpinnerSize,
   IGroup,
   GroupHeader,
-  IGroupHeaderProps
+  IGroupHeaderProps,
+  PrimaryButton
 } from '@fluentui/react';
 
 // URL вашего сайта SharePoint
@@ -31,7 +32,7 @@ interface IExportToSRSItem {
   StaffGroupId: number;
   Condition: number;
   GroupMemberId: number;
-  PathForSRSFile: string; // Добавлено новое поле
+  PathForSRSFile: string;
 }
 
 // Интерфейс для данных из списка StaffRecords
@@ -91,7 +92,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     { key: 'staffGroup', name: 'Staff Group', fieldName: 'StaffGroupId', minWidth: 100, maxWidth: 150 },
     { key: 'condition', name: 'Condition', fieldName: 'Condition', minWidth: 100, maxWidth: 150 },
     { key: 'groupMember', name: 'Group Member', fieldName: 'GroupMemberId', minWidth: 100, maxWidth: 150 },
-    { key: 'pathForSRSFile', name: 'Path For SRS File', fieldName: 'PathForSRSFile', minWidth: 200, maxWidth: 300 } // Добавлена новая колонка
+    { key: 'pathForSRSFile', name: 'Path For SRS File', fieldName: 'PathForSRSFile', minWidth: 200, maxWidth: 300 }
   ];
 
   // Определение колонок для StaffRecords с добавленными полями
@@ -142,7 +143,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
         console.log('Fetching data from ExportToSRS list at:', kpfaDataUrl);
         
         const endpoint = `${kpfaDataUrl}/_api/web/lists/getbytitle('ExportToSRS')/items`;
-        const select = "Id,Title,StaffMemberId,Date1,Date2,ManagerId,StaffGroupId,Condition,GroupMemberId,PathForSRSFile"; // Добавлено новое поле
+        const select = "Id,Title,StaffMemberId,Date1,Date2,ManagerId,StaffGroupId,Condition,GroupMemberId,PathForSRSFile";
         const queryUrl = `${endpoint}?$select=${select}`;
         
         const response: SPHttpClientResponse = await props.context.spHttpClient.get(
@@ -187,7 +188,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
                     "Checked,ExportResult,ShiftDate1,ShiftDate2,TimeForLunch,Contract,TypeOfLeaveId,TypeOfLeave/Id," +
                     "TypeOfLeave/Title,LeaveTime,LeaveNote,LunchNote,TotalHoursNote,ReliefHours";
       const expand = "StaffMember,TypeOfLeave";
-      let queryUrl = `${endpoint}?$select=${select}&$expand=${expand}&$top=5000`; // Увеличиваем лимит до 5000 (максимум для SharePoint)
+      let queryUrl = `${endpoint}?$select=${select}&$expand=${expand}&$top=5000`;
       
       let nextLink: string | null = queryUrl;
       let pageCount = 1;
@@ -369,6 +370,80 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     }
   };
 
+  // Функция экспорта данных для конкретной группы (дня)
+  const exportGroupData = (groupKey: string): void => {
+    if (!selectedItem) return;
+    
+    // Получаем записи для данной группы
+    const groupRecords = filteredStaffRecords.filter(record => 
+      record.Date.split('T')[0] === groupKey
+    );
+    
+    if (groupRecords.length === 0) {
+      alert('Нет данных для экспорта');
+      return;
+    }
+    
+    // Подготавливаем данные для экспорта
+    const dataToExport = groupRecords.map(record => ({
+      Id: record.Id,
+      Date: record.Date,
+      ShiftDate1: record.ShiftDate1,
+      ShiftDate2: record.ShiftDate2,
+      StaffMemberId: record.StaffMemberId,
+      ManagerId: record.ManagerId,
+      StaffGroupId: record.StaffGroupId,
+      TimeForLunch: record.TimeForLunch,
+      Contract: record.Contract,
+      TypeOfLeaveId: record.TypeOfLeaveId,
+      LeaveTime: record.LeaveTime,
+      LeaveNote: record.LeaveNote,
+      LunchNote: record.LunchNote,
+      TotalHoursNote: record.TotalHoursNote,
+      ReliefHours: record.ReliefHours,
+      Checked: record.Checked,
+      ExportResult: record.ExportResult
+    }));
+    
+    console.log(`Exporting ${dataToExport.length} records for ${formatDate(groupKey)}`);
+    console.log('Export data:', dataToExport);
+    
+    // Здесь должен быть ваш код для фактического экспорта данных в Excel
+    // например через exceljs или через вызов API
+    
+    // Временное уведомление для демонстрации
+    alert(`Экспортировано ${dataToExport.length} записей для ${formatDate(groupKey)}`);
+  };
+
+  // Кастомный рендер для заголовка группы с кнопкой экспорта
+  const onRenderGroupHeader = (props?: IGroupHeaderProps): JSX.Element | null => {
+    if (!props) return null;
+    
+    return (
+      <div className={styles.groupHeader}>
+        <GroupHeader 
+          {...props} 
+          styles={{ 
+            root: { 
+              backgroundColor: '#f0f0f0', 
+              fontWeight: 'bold',
+              padding: '10px 0',
+              flex: '1'
+            },
+            title: {
+              fontSize: '14px'
+            }
+          }} 
+        />
+        <PrimaryButton 
+          text="Export" 
+          onClick={() => exportGroupData(props.group?.key || '')}
+          className={styles.exportGroupButton}
+        />
+      </div>
+    );
+  };
+
   // Функция для фильтрации StaffRecords на основе выбранной строки ExportToSRS
   const handleFilterStaffRecords = async (selectedExportItem: IExportToSRSItem): Promise<void> => {
     console.log('Filtering staff records for:', selectedExportItem);
@@ -381,7 +456,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
       ManagerId: selectedExportItem.ManagerId,
       StaffGroupId: selectedExportItem.StaffGroupId,
       StaffMemberId: selectedExportItem.StaffMemberId,
-      PathForSRSFile: selectedExportItem.PathForSRSFile // Добавлено отображение нового поля
+      PathForSRSFile: selectedExportItem.PathForSRSFile
     });
     
     setIsLoadingStaffRecords(true);
@@ -458,7 +533,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
       debugLines.push(`Записей, соответствующих условию по ManagerId (${selectedExportItem.ManagerId}): ${matchingManager.length}`);
       debugLines.push(`Записей, соответствующих условию по StaffGroupId (${selectedExportItem.StaffGroupId}): ${matchingGroup.length}`);
       debugLines.push(`Записей, соответствующих условию по StaffMemberId (${selectedExportItem.StaffMemberId}): ${matchingStaffMember.length}`);
-      debugLines.push(`Path For SRS File: ${selectedExportItem.PathForSRSFile || 'Not specified'}`); // Добавлено отображение нового поля
+      debugLines.push(`Path For SRS File: ${selectedExportItem.PathForSRSFile || 'Not specified'}`);
       
       // Применяем все условия фильтрации
       const filtered = records.filter((record: IStaffRecordsItem) => {
@@ -514,27 +589,6 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     } finally {
       setIsLoadingStaffRecords(false);
     }
-  };
-
-  // Кастомный рендер для заголовка группы
-  const onRenderGroupHeader = (props?: IGroupHeaderProps): JSX.Element | null => {
-    if (!props) return null;
-    
-    return (
-      <GroupHeader 
-        {...props} 
-        styles={{ 
-          root: { 
-            backgroundColor: '#f0f0f0', 
-            fontWeight: 'bold',
-            padding: '10px 0'
-          },
-          title: {
-            fontSize: '14px'
-          }
-        }} 
-      />
-    );
   };
 
   return (

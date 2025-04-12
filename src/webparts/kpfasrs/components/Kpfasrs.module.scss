@@ -79,4 +79,20 @@
     padding-top: 15px;
     border-top: 1px solid #e0e0e0;
   }
+
+  // Новые стили для кнопки экспорта в заголовке группы
+  .groupHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    background-color: #f0f0f0;
+    padding: 0 12px 0 0;
+  }
+  
+  .exportGroupButton {
+    min-width: 80px;
+    height: 32px;
+    margin-left: 10px;
+  }
 }
