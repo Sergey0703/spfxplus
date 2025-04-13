@@ -21,7 +21,7 @@ import {
   DefaultButton
 } from '@fluentui/react';
 import { SharePointService } from '../services/SharePointService';
-import { ExcelService, IExportToSRSItem, IStaffRecordsItem } from '../services/ExcelService';
+import { ExcelService, IExportToSRSItem, IStaffRecordsItem, IFileCheckResult } from '../services/ExcelService';
 import { DataUtils } from '../services/DataUtils';
 
 const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
@@ -42,6 +42,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
   const [dialogMessage, setDialogMessage] = useState<string>('');
   const [dialogTitle, setDialogTitle] = useState<string>('');
   const [isErrorDialog, setIsErrorDialog] = useState<boolean>(false);
+  const [lastSearchResult, setLastSearchResult] = useState<IFileCheckResult | null>(null);
   
   // Общие состояния
   const [error, setError] = useState<string | null>(null);
@@ -196,10 +197,20 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
       // Проверяем существование файла, передавая дату группы
       const checkResult = await excelService.checkExcelFile(filePath, selectedItem, groupDate);
       
+      // Сохраняем результат поиска
+      setLastSearchResult(checkResult);
+      
       if (checkResult.success) {
-        // Файл найден
-        setDialogTitle('Успешно');
-        setDialogMessage(`${checkResult.message}. Полный путь к файлу: ${checkResult.filePath}`);
+        // Определяем заголовок на основе результата поиска строки
+        let title = 'Файл найден';
+        if (checkResult.rowFound) {
+          title = 'Успешно';
+        } else {
+          title = 'Строка не найдена';
+        }
+        
+        setDialogTitle(title);
+        setDialogMessage(checkResult.message);
         setIsErrorDialog(false);
       } else {
         // Файл не найден или произошла ошибка
@@ -311,6 +322,23 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
                       <>
                         {selectedItem ? (
                           <>
+                            {lastSearchResult && (
+                              <MessageBar
+                                messageBarType={lastSearchResult.rowFound ? MessageBarType.success : MessageBarType.warning}
+                                isMultiline={true}
+                                className={styles.infoMessage}
+                                dismissButtonAriaLabel="Close"
+                              >
+                                <h4>Результат поиска в Excel:</h4>
+                                <div>
+                                  {lastSearchResult.rowFound ? 
+                                    `Строка найдена в позиции ${lastSearchResult.rowNumber}` : 
+                                    `Строка не найдена. Проверьте формат даты в Excel.`
+                                  }
+                                </div>
+                              </MessageBar>
+                            )}
+                            
                             {debugInfo && (
                               <MessageBar
                                 messageBarType={MessageBarType.info}
@@ -374,11 +402,11 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
           subText: dialogMessage,
           styles: isErrorDialog 
             ? { title: { color: '#a4262c' } } 
-            : { title: { color: '#107c10' } }
+            : { title: { color: lastSearchResult?.rowFound ? '#107c10' : '#f3901d' } }
         }}
         modalProps={{
           isBlocking: false,
-          styles: { main: { maxWidth: 450 } }
+          styles: { main: { maxWidth: 600 } }
         }}
       >
         <DialogFooter>

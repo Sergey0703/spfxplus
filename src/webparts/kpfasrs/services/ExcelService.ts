@@ -1,11 +1,14 @@
 import { WebPartContext } from "@microsoft/sp-webpart-base";
 import { SPHttpClient, SPHttpClientResponse } from '@microsoft/sp-http';
+import * as XLSX from 'xlsx';
 
 // Интерфейс для результата проверки файла
 export interface IFileCheckResult {
   success: boolean;
   message: string;
   filePath?: string;
+  rowFound?: boolean;
+  rowNumber?: number;
 }
 
 // Интерфейс для данных из списка ExportToSRS
@@ -62,6 +65,11 @@ export class ExcelService {
     this.context = context;
   }
 
+  // Вспомогательная функция для нормализации строки (удаляет пробелы, переводит в нижний регистр)
+  //private normalizeString(str: string): string {
+    //return str.replace(/\s+/g, '').toLowerCase();
+  //}
+
   // Функция для проверки существования файла Excel и поиска строки по дате
   public async checkExcelFile(
     filePath: string, 
@@ -85,8 +93,39 @@ export class ExcelService {
       const serverRelativePath = `/sites/StaffRecordSheets/Shared Documents/${cleanPath}`;
       console.log(`Проверка существования файла: ${fullPath}`);
 
+      // Определяем строку для поиска на основе даты
+      let dateForSearch = "";
+      let dateSource = "неизвестно";
+      
+      if (groupDate) {
+        // Используем дату группы если она передана (приоритетнее)
+        try {
+          dateForSearch = this.convertDateFormatSRS(groupDate);
+          dateSource = "из группы";
+          console.log(`Дата для поиска строки в Excel (из группы): ${dateForSearch}`);
+        } catch (e) {
+          console.error('Ошибка преобразования даты группы:', e);
+        }
+      } else if (selectedItem && selectedItem.Date1) {
+        // Используем Date1 из выбранной записи как запасной вариант
+        try {
+          const searchDate = new Date(selectedItem.Date1);
+          dateForSearch = this.convertDateFormatSRS(searchDate);
+          dateSource = "из записи ExportToSRS";
+          console.log(`Дата для поиска строки в Excel (из записи): ${dateForSearch}`);
+        } catch (e) {
+          console.error('Ошибка преобразования даты записи:', e);
+        }
+      }
+
+      if (!dateForSearch) {
+        return {
+          success: false,
+          message: 'Не удалось определить дату для поиска строки в Excel файле.'
+        };
+      }
+      
       // API запрос для проверки существования файла
-      // Используем подход с получением свойств файла вместо его содержимого
       const filePropsUrl = `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${serverRelativePath}')/Properties`;
       
       const response: SPHttpClientResponse = await this.context.spHttpClient.get(
@@ -94,55 +133,120 @@ export class ExcelService {
         SPHttpClient.configurations.v1
       );
 
-      if (response.ok) {
-        // Файл найден
-        // Теперь мы должны определить, какую строку искать (на основе даты)
-        let dateForSearch = "";
+      if (!response.ok) {
+        if (response.status === 404) {
+          // Файл не найден
+          return {
+            success: false,
+            message: `Файл не найден: ${fullPath}\nПроверьте путь и убедитесь, что файл существует.`
+          };
+        } else {
+          // Другая ошибка
+          const errorText = await response.text();
+          console.error('Error checking file:', response.status, errorText);
+          return {
+            success: false,
+            message: `Ошибка при проверке файла: ${response.status} ${response.statusText}`
+          };
+        }
+      }
+      
+      // Файл найден, теперь загружаем содержимое файла как бинарные данные
+      const fileContentUrl = `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${serverRelativePath}')/$value`;
+      
+      const fileContentResponse: SPHttpClientResponse = await this.context.spHttpClient.get(
+        fileContentUrl,
+        SPHttpClient.configurations.v1
+      );
+      
+      if (!fileContentResponse.ok) {
+        return {
+          success: false,
+          message: `Ошибка при загрузке содержимого файла: ${fileContentResponse.status} ${fileContentResponse.statusText}`
+        };
+      }
+      
+      // Получаем содержимое файла как массив байтов
+      const fileArrayBuffer = await fileContentResponse.arrayBuffer();
+      
+      // Теперь мы можем использовать библиотеку SheetJS для работы с Excel файлом
+      try {        
+        // Загружаем книгу Excel
+        const workbook = XLSX.read(new Uint8Array(fileArrayBuffer), {type: 'array'});
         
-        if (groupDate) {
-          // Используем дату группы если она передана (приоритетнее)
-          try {
-            dateForSearch = this.convertDateFormatSRS(groupDate);
-            console.log(`Дата для поиска строки в Excel (из группы): ${dateForSearch}`);
-          } catch (e) {
-            console.error('Ошибка преобразования даты группы:', e);
-          }
-        } else if (selectedItem && selectedItem.Date1) {
-          // Используем Date1 из выбранной записи как запасной вариант
-          try {
-            const searchDate = new Date(selectedItem.Date1);
-            dateForSearch = this.convertDateFormatSRS(searchDate);
-            console.log(`Дата для поиска строки в Excel (из записи): ${dateForSearch}`);
-          } catch (e) {
-            console.error('Ошибка преобразования даты записи:', e);
+        // Выводим информацию о листах в книге для отладки
+        console.log('Листы в книге:', workbook.SheetNames);
+        
+        // Просто ищем второй лист в файле, учитывая, что индексация начинается с 0
+        if (workbook.SheetNames.length < 2) {
+          return {
+            success: true,
+            message: `Файл найден, но в нём меньше двух листов. Доступные листы: ${workbook.SheetNames.join(", ")}. Поиск строки: "${dateForSearch}".`,
+            filePath: fullPath,
+            rowFound: false
+          };
+        }
+        
+        // Просто берем второй лист (индекс 1, так как индексация начинается с 0)
+        const targetSheetName = workbook.SheetNames[1];
+        console.log(`Используем второй лист: "${targetSheetName}"`);
+        
+        const worksheet = workbook.Sheets[targetSheetName];
+        
+        // Преобразуем лист в массив объектов
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: ""});
+        
+        console.log(`Поиск строки с текстом "${dateForSearch}" в колонке A`);
+        
+        // Ищем строку, где в колонке A находится искомая дата
+        let rowFound = false;
+        let rowNumber = -1;
+        
+        for (let i = 0; i < jsonData.length; i++) {
+          const row = jsonData[i] as any[];
+          
+          // Проверяем первую ячейку (колонка A)
+          if (row && row.length > 0 && typeof row[0] === 'string') {
+            const cellValue = row[0].trim();
+            
+            console.log(`Проверка строки ${i + 1}, значение: "${cellValue}"`);
+            
+            if (cellValue === dateForSearch) {
+              rowFound = true;
+              rowNumber = i + 1; // +1 т.к. нумерация строк в Excel начинается с 1
+              console.log(`Строка найдена! Номер строки: ${rowNumber}`);
+              break;
+            }
           }
         }
         
-        // Пока что мы только проверили наличие файла, но не выполняли поиск строки
-        // В реальном коде здесь будет логика поиска строки в Excel
-        // Пока используем заглушку: строка "не найдена"
-        const foundStringStatus = "Строка не найдена. Потребуется реализация поиска внутри Excel-файла.";
+        if (rowFound) {
+          return {
+            success: true,
+            message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}".\n\n3. Строка найдена в позиции ${rowNumber}.`,
+            filePath: fullPath,
+            rowFound: true,
+            rowNumber: rowNumber
+          };
+        } else {
+          return {
+            success: true,
+            message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен в листе "${targetSheetName}", но строка не найдена.\n\n3. Проверьте формат даты и содержимое файла Excel.`,
+            filePath: fullPath,
+            rowFound: false
+          };
+        }
         
+      } catch (error) {
+        console.error('Error processing Excel file:', error);
         return {
           success: true,
-          message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Строка для поиска: "${dateForSearch}"\n\n3. Результат поиска строки: ${foundStringStatus}`,
-          filePath: fullPath
-        };
-      } else if (response.status === 404) {
-        // Файл не найден
-        return {
-          success: false,
-          message: `Файл не найден: ${fullPath}\nПроверьте путь и убедитесь, что файл существует.`
-        };
-      } else {
-        // Другая ошибка
-        const errorText = await response.text();
-        console.error('Error checking file:', response.status, errorText);
-        return {
-          success: false,
-          message: `Ошибка при проверке файла: ${response.status} ${response.statusText}`
+          message: `Файл успешно найден, но произошла ошибка при анализе содержимого Excel: ${error.message}. Поиск строки: "${dateForSearch}".`,
+          filePath: fullPath,
+          rowFound: false
         };
       }
+      
     } catch (error) {
       console.error('Error in checkExcelFile:', error);
       return {
