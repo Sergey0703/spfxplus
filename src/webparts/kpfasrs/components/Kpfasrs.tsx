@@ -15,11 +15,18 @@ import {
   IGroup,
   GroupHeader,
   IGroupHeaderProps,
-  PrimaryButton
+  PrimaryButton,
+  Dialog,
+  DialogType,
+  DialogFooter,
+  DefaultButton
 } from '@fluentui/react';
 
-// URL вашего сайта SharePoint
+// URL вашего сайта SharePoint с данными
 const kpfaDataUrl: string = "https://kpfaie.sharepoint.com/sites/KPFAData";
+
+// URL вашего сайта SharePoint с файлами Excel
+const kpfaExcelUrl: string = "https://kpfaie.sharepoint.com/sites/StaffRecordSheets";
 
 // Интерфейс для данных из списка ExportToSRS
 interface IExportToSRSItem {
@@ -65,6 +72,13 @@ interface IStaffRecordsItem {
   ReliefHours: number;
 }
 
+// Интерфейс для результата проверки файла
+interface IFileCheckResult {
+  success: boolean;
+  message: string;
+  filePath?: string;
+}
+
 const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
   // Состояния для ExportToSRS
   const [items, setItems] = useState<IExportToSRSItem[]>([]);
@@ -76,6 +90,13 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
   const [staffRecordsGroups, setStaffRecordsGroups] = useState<IGroup[]>([]);
   const [isLoadingStaffRecords, setIsLoadingStaffRecords] = useState<boolean>(false);
   const [selectedItem, setSelectedItem] = useState<IExportToSRSItem | null>(null);
+  
+  // Состояния для экспорта и диалогов
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [showDialog, setShowDialog] = useState<boolean>(false);
+  const [dialogMessage, setDialogMessage] = useState<string>('');
+  const [dialogTitle, setDialogTitle] = useState<string>('');
+  const [isErrorDialog, setIsErrorDialog] = useState<boolean>(false);
   
   // Общие состояния
   const [error, setError] = useState<string | null>(null);
@@ -256,6 +277,108 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     }
   };
 
+  // Функция для проверки существования файла Excel
+  const checkExcelFile = async (filePath: string): Promise<IFileCheckResult> => {
+    try {
+      // Проверяем, указан ли путь к файлу
+      if (!filePath || filePath.trim() === '') {
+        return {
+          success: false,
+          message: 'Путь к файлу не указан в выбранной записи. Проверьте поле PathForSRSFile.'
+        };
+      }
+
+      // Удаляем начальный слеш из filePath, если он есть
+      const cleanPath = filePath.charAt(0) === '/' ? filePath.substring(1) : filePath;
+
+      // Формируем полный путь к файлу с правильным именем библиотеки
+      const fullPath = `${kpfaExcelUrl}/Shared Documents/${cleanPath}`;
+      const serverRelativePath = `/sites/StaffRecordSheets/Shared Documents/${cleanPath}`;
+      console.log(`Проверка существования файла: ${fullPath}`);
+
+      // API запрос для проверки существования файла
+      // Используем подход с получением свойств файла вместо его содержимого
+      const filePropsUrl = `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${serverRelativePath}')/Properties`;
+      
+      const response: SPHttpClientResponse = await props.context.spHttpClient.get(
+        filePropsUrl,
+        SPHttpClient.configurations.v1
+      );
+
+      if (response.ok) {
+        // Файл найден
+        return {
+          success: true,
+          message: `Файл успешно найден`,
+          filePath: `${kpfaExcelUrl}/Shared Documents/${cleanPath}`
+        };
+      } else if (response.status === 404) {
+        // Файл не найден
+        return {
+          success: false,
+          message: `Файл не найден: ${kpfaExcelUrl}/Shared Documents/${cleanPath}. Проверьте путь и убедитесь, что файл существует.`
+        };
+      } else {
+        // Другая ошибка
+        const errorText = await response.text();
+        console.error('Error checking file:', response.status, errorText);
+        return {
+          success: false,
+          message: `Ошибка при проверке файла: ${response.status} ${response.statusText}`
+        };
+      }
+    } catch (error) {
+      console.error('Error in checkExcelFile:', error);
+      return {
+        success: false,
+        message: `Ошибка при проверке файла: ${error.message}`
+      };
+    }
+  };
+
+  // Функция для обработки нажатия кнопки Export
+  const handleExport = async (): Promise<void> => {
+    if (!selectedItem) {
+      setDialogTitle('Ошибка экспорта');
+      setDialogMessage('Не выбрана запись для экспорта. Выберите запись из верхней таблицы.');
+      setIsErrorDialog(true);
+      setShowDialog(true);
+      return;
+    }
+
+    try {
+      setIsExporting(true);
+      
+      // Получаем путь к файлу из выбранной записи
+      const filePath = selectedItem.PathForSRSFile;
+      
+      // Проверяем существование файла
+      const checkResult = await checkExcelFile(filePath);
+      
+      if (checkResult.success) {
+        // Файл найден
+        setDialogTitle('Успешно');
+        setDialogMessage(`${checkResult.message}. Полный путь к файлу: ${checkResult.filePath}`);
+        setIsErrorDialog(false);
+      } else {
+        // Файл не найден или произошла ошибка
+        setDialogTitle('Ошибка');
+        setDialogMessage(checkResult.message);
+        setIsErrorDialog(true);
+      }
+      
+      setShowDialog(true);
+    } catch (error) {
+      console.error('Error during export:', error);
+      setDialogTitle('Ошибка экспорта');
+      setDialogMessage(`Произошла ошибка при экспорте: ${error.message}`);
+      setIsErrorDialog(true);
+      setShowDialog(true);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Функция для проверки, является ли смена "пустой" (время 00:00)
   const isEmptyShift = (record: IStaffRecordsItem): boolean => {
     const shiftDate1 = record.ShiftDate1 || '';
@@ -368,80 +491,6 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
       console.error('Error formatting date:', dateString, e);
       return dateString;
     }
-  };
-
-  // Функция экспорта данных для конкретной группы (дня)
-  const exportGroupData = (groupKey: string): void => {
-    if (!selectedItem) return;
-    
-    // Получаем записи для данной группы
-    const groupRecords = filteredStaffRecords.filter(record => 
-      record.Date.split('T')[0] === groupKey
-    );
-    
-    if (groupRecords.length === 0) {
-      alert('Нет данных для экспорта');
-      return;
-    }
-    
-    // Подготавливаем данные для экспорта
-    const dataToExport = groupRecords.map(record => ({
-      Id: record.Id,
-      Date: record.Date,
-      ShiftDate1: record.ShiftDate1,
-      ShiftDate2: record.ShiftDate2,
-      StaffMemberId: record.StaffMemberId,
-      ManagerId: record.ManagerId,
-      StaffGroupId: record.StaffGroupId,
-      TimeForLunch: record.TimeForLunch,
-      Contract: record.Contract,
-      TypeOfLeaveId: record.TypeOfLeaveId,
-      LeaveTime: record.LeaveTime,
-      LeaveNote: record.LeaveNote,
-      LunchNote: record.LunchNote,
-      TotalHoursNote: record.TotalHoursNote,
-      ReliefHours: record.ReliefHours,
-      Checked: record.Checked,
-      ExportResult: record.ExportResult
-    }));
-    
-    console.log(`Exporting ${dataToExport.length} records for ${formatDate(groupKey)}`);
-    console.log('Export data:', dataToExport);
-    
-    // Здесь должен быть ваш код для фактического экспорта данных в Excel
-    // например через exceljs или через вызов API
-    
-    // Временное уведомление для демонстрации
-    alert(`Экспортировано ${dataToExport.length} записей для ${formatDate(groupKey)}`);
-  };
-
-  // Кастомный рендер для заголовка группы с кнопкой экспорта
-  const onRenderGroupHeader = (props?: IGroupHeaderProps): JSX.Element | null => {
-    if (!props) return null;
-    
-    return (
-      <div className={styles.groupHeader}>
-        <GroupHeader 
-          {...props} 
-          styles={{ 
-            root: { 
-              backgroundColor: '#f0f0f0', 
-              fontWeight: 'bold',
-              padding: '10px 0',
-              flex: '1'
-            },
-            title: {
-              fontSize: '14px'
-            }
-          }} 
-        />
-        <PrimaryButton 
-          text="Export" 
-          onClick={() => exportGroupData(props.group?.key || '')}
-          className={styles.exportGroupButton}
-        />
-      </div>
-    );
   };
 
   // Функция для фильтрации StaffRecords на основе выбранной строки ExportToSRS
@@ -591,6 +640,46 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     }
   };
 
+  // Кастомный рендер для заголовка группы
+  const onRenderGroupHeader = (props?: IGroupHeaderProps): JSX.Element | null => {
+    if (!props) return null;
+    
+    return (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f0f0f0', padding: '10px' }}>
+        <GroupHeader 
+          {...props} 
+          styles={{ 
+            root: { 
+              backgroundColor: 'transparent', 
+              fontWeight: 'bold',
+              padding: '0',
+              flex: '1'
+            },
+            title: {
+              fontSize: '14px'
+            }
+          }} 
+        />
+        <PrimaryButton
+          text={isExporting ? "Экспорт..." : "Экспортировать"}
+          onClick={() => handleExport()}
+          disabled={isExportDisabled()}
+          styles={{ root: { minWidth: '120px' } }}
+        />
+      </div>
+    );
+  };
+
+  // Закрытие диалога
+  const closeDialog = (): void => {
+    setShowDialog(false);
+  };
+
+  // Проверка наличия данных в PathForSRSFile у выбранной записи
+  const isExportDisabled = (): boolean => {
+    return !selectedItem || isExporting || !selectedItem.PathForSRSFile || selectedItem.PathForSRSFile.trim() === '';
+  };
+
   return (
     <div className={styles.kpfasrs}>
       <div className={styles.container}>
@@ -691,6 +780,28 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
           </div>
         </div>
       </div>
+      
+      {/* Диалог для результатов экспорта */}
+      <Dialog
+        hidden={!showDialog}
+        onDismiss={closeDialog}
+        dialogContentProps={{
+          type: isErrorDialog ? DialogType.largeHeader : DialogType.normal,
+          title: dialogTitle,
+          subText: dialogMessage,
+          styles: isErrorDialog 
+            ? { title: { color: '#a4262c' } } 
+            : { title: { color: '#107c10' } }
+        }}
+        modalProps={{
+          isBlocking: false,
+          styles: { main: { maxWidth: 450 } }
+        }}
+      >
+        <DialogFooter>
+          <DefaultButton onClick={closeDialog} text="Закрыть" />
+        </DialogFooter>
+      </Dialog>
     </div>
   );
 };
