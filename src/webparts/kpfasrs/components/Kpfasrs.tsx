@@ -277,7 +277,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     }
   };
 
-  // Функция для проверки существования файла Excel
+  // Функция для проверки существования файла Excel и поиска строки по дате
   const checkExcelFile = async (filePath: string): Promise<IFileCheckResult> => {
     try {
       // Проверяем, указан ли путь к файлу
@@ -307,16 +307,33 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
 
       if (response.ok) {
         // Файл найден
+        // Теперь мы должны определить, какую строку искать (на основе даты)
+        let dateForSearch = "";
+        if (selectedItem && selectedItem.Date1) {
+          try {
+            const searchDate = new Date(selectedItem.Date1);
+            dateForSearch = convertDateFormatSRS(searchDate);
+            console.log(`Дата для поиска строки в Excel: ${dateForSearch}`);
+          } catch (e) {
+            console.error('Ошибка преобразования даты:', e);
+          }
+        }
+        
+        // Пока что мы только проверили наличие файла, но не выполняли поиск строки
+        // В реальном коде здесь будет логика поиска строки в Excel
+        // Пока используем заглушку: строка "не найдена"
+        const foundStringStatus = "Строка не найдена. Потребуется реализация поиска внутри Excel-файла.";
+        
         return {
           success: true,
-          message: `Файл успешно найден`,
-          filePath: `${kpfaExcelUrl}/Shared Documents/${cleanPath}`
+          message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Строка для поиска: "${dateForSearch}"\n\n3. Результат поиска строки: ${foundStringStatus}`,
+          filePath: fullPath
         };
       } else if (response.status === 404) {
         // Файл не найден
         return {
           success: false,
-          message: `Файл не найден: ${kpfaExcelUrl}/Shared Documents/${cleanPath}. Проверьте путь и убедитесь, что файл существует.`
+          message: `Файл не найден: ${fullPath}\nПроверьте путь и убедитесь, что файл существует.`
         };
       } else {
         // Другая ошибка
@@ -640,7 +657,33 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     }
   };
 
-  // Кастомный рендер для заголовка группы
+  // Функция для преобразования даты в формат "1st of Jan" и т.д.
+  const convertDateFormatSRS = (inputDate: Date): string => {
+    try {
+      // Получаем число месяца (1-31)
+      const day = inputDate.getDate();
+      
+      // Определяем суффикс (st, nd, rd, th)
+      let suffix = "th";
+      if (day % 10 === 1 && day % 100 !== 11) {
+        suffix = "st";
+      } else if (day % 10 === 2 && day % 100 !== 12) {
+        suffix = "nd";
+      } else if (day % 10 === 3 && day % 100 !== 13) {
+        suffix = "rd";
+      }
+      
+      // Получаем месяц (0-11) и преобразуем в сокращение
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const month = monthNames[inputDate.getMonth()];
+      
+      // Формируем итоговую строку
+      return `${day}${suffix} of ${month}`;
+    } catch (error) {
+      console.error('Error converting date:', error);
+      return "Invalid Date";
+    }
+  };
   const onRenderGroupHeader = (props?: IGroupHeaderProps): JSX.Element | null => {
     if (!props) return null;
     
