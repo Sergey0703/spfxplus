@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useState, useEffect } from 'react';
 import styles from './Kpfasrs.module.scss';
 import { IKpfasrsProps } from './IKpfasrsProps';
-import { SPHttpClient, SPHttpClientResponse } from '@microsoft/sp-http';
 import { 
   DetailsList, 
   SelectionMode, 
@@ -21,63 +20,9 @@ import {
   DialogFooter,
   DefaultButton
 } from '@fluentui/react';
-
-// URL вашего сайта SharePoint с данными
-const kpfaDataUrl: string = "https://kpfaie.sharepoint.com/sites/KPFAData";
-
-// URL вашего сайта SharePoint с файлами Excel
-const kpfaExcelUrl: string = "https://kpfaie.sharepoint.com/sites/StaffRecordSheets";
-
-// Интерфейс для данных из списка ExportToSRS
-interface IExportToSRSItem {
-  Id: number;
-  Title: boolean;
-  StaffMemberId: number;
-  Date1: string;
-  Date2: string;
-  ManagerId: number;
-  StaffGroupId: number;
-  Condition: number;
-  GroupMemberId: number;
-  PathForSRSFile: string;
-}
-
-// Интерфейс для данных из списка StaffRecords
-interface IStaffRecordsItem {
-  Id: number;
-  Title: string;
-  Date: string;
-  StaffMemberId: number;
-  ManagerId: number;
-  StaffGroupId: number;
-  StaffMember?: {
-    Id: number;
-    Title: string;
-  };
-  Checked: number;
-  ExportResult: number;
-  ShiftDate1: string;
-  ShiftDate2: string;
-  TimeForLunch: number;
-  Contract: number;
-  TypeOfLeaveId: number;
-  TypeOfLeave?: {
-    Id: number;
-    Title: string;
-  };
-  LeaveTime: number;
-  LeaveNote: string;
-  LunchNote: string;
-  TotalHoursNote: string;
-  ReliefHours: number;
-}
-
-// Интерфейс для результата проверки файла
-interface IFileCheckResult {
-  success: boolean;
-  message: string;
-  filePath?: string;
-}
+import { SharePointService } from '../services/SharePointService';
+import { ExcelService, IExportToSRSItem, IStaffRecordsItem } from '../services/ExcelService';
+import { DataUtils } from '../services/DataUtils';
 
 const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
   // Состояния для ExportToSRS
@@ -102,6 +47,11 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
   const [error, setError] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string | null>(null);
 
+  // Инициализация сервисов
+  const sharePointService = React.useMemo(() => new SharePointService(props.context), [props.context]);
+  const excelService = React.useMemo(() => new ExcelService(props.context), [props.context]);
+  const dataUtils = React.useMemo(() => new DataUtils(excelService), [excelService]);
+
   // Определение колонок для ExportToSRS
   const columns: IColumn[] = [
     { key: 'id', name: 'ID', fieldName: 'Id', minWidth: 50, maxWidth: 50 },
@@ -115,7 +65,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     { key: 'groupMember', name: 'Group Member', fieldName: 'GroupMemberId', minWidth: 100, maxWidth: 150 },
     { key: 'pathForSRSFile', name: 'Path For SRS File', fieldName: 'PathForSRSFile', minWidth: 200, maxWidth: 300 }
   ];
-
+  
   // Определение колонок для StaffRecords с добавленными полями
   const staffRecordsColumns: IColumn[] = [
     { key: 'id', name: 'ID', fieldName: 'Id', minWidth: 50, maxWidth: 50 },
@@ -153,208 +103,69 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
       }
     }
   });
-
-  // Загрузка данных из списка ExportToSRS
+  
+  // Загрузка данных из списка ExportToSRS при инициализации
   useEffect(() => {
-    const getExportToSRSItems = async (): Promise<void> => {
+    const loadExportToSRSItems = async (): Promise<void> => {
       try {
         setIsLoading(true);
         setError(null);
         
-        console.log('Fetching data from ExportToSRS list at:', kpfaDataUrl);
-        
-        const endpoint = `${kpfaDataUrl}/_api/web/lists/getbytitle('ExportToSRS')/items`;
-        const select = "Id,Title,StaffMemberId,Date1,Date2,ManagerId,StaffGroupId,Condition,GroupMemberId,PathForSRSFile";
-        const queryUrl = `${endpoint}?$select=${select}`;
-        
-        const response: SPHttpClientResponse = await props.context.spHttpClient.get(
-          queryUrl,
-          SPHttpClient.configurations.v1
-        );
-
-        if (response.ok) {
-          const results = await response.json();
-          console.log('Data loaded successfully:', results.value.length, 'items');
-          console.log('Sample data item:', results.value.length > 0 ? results.value[0] : 'No items');
-          setItems(results.value);
-        } else {
-          const errorText = await response.text();
-          console.error('Error fetching ExportToSRS items:', response.status, errorText);
-          setError(`Ошибка при загрузке данных из ExportToSRS: ${response.status} ${response.statusText}`);
-        }
+        const loadedItems = await sharePointService.getExportToSRSItems();
+        setItems(loadedItems);
       } catch (error) {
-        console.error('Error in getExportToSRSItems:', error);
+        console.error('Error in loadExportToSRSItems:', error);
         setError(`Ошибка: ${error.message}`);
       } finally {
         setIsLoading(false);
       }
     };
 
-    getExportToSRSItems();
-  }, [props.context]);
-
-  // Функция для загрузки данных из StaffRecords
-  const loadStaffRecords = async (): Promise<IStaffRecordsItem[]> => {
+    loadExportToSRSItems();
+  }, [sharePointService]);
+  
+  // Функция для обработки фильтрации StaffRecords
+  const handleFilterStaffRecords = async (selectedExportItem: IExportToSRSItem): Promise<void> => {
+    setIsLoadingStaffRecords(true);
+    setDebugInfo(null);
+    
     try {
-      setIsLoadingStaffRecords(true);
-      
-      console.log('Loading StaffRecords from:', kpfaDataUrl);
-      
-      // Массив для всех записей
-      let allRecords: IStaffRecordsItem[] = [];
-      
-      // URL для первого запроса
-      let endpoint = `${kpfaDataUrl}/_api/web/lists/getbytitle('StaffRecords')/items`;
-      const select = "Id,Title,Date,StaffMemberId,StaffMember/Id,StaffMember/Title,ManagerId,StaffGroupId," +
-                    "Checked,ExportResult,ShiftDate1,ShiftDate2,TimeForLunch,Contract,TypeOfLeaveId,TypeOfLeave/Id," +
-                    "TypeOfLeave/Title,LeaveTime,LeaveNote,LunchNote,TotalHoursNote,ReliefHours";
-      const expand = "StaffMember,TypeOfLeave";
-      let queryUrl = `${endpoint}?$select=${select}&$expand=${expand}&$top=5000`;
-      
-      let nextLink: string | null = queryUrl;
-      let pageCount = 1;
-      
-      // Цикл для обработки всех страниц
-      while (nextLink) {
-        console.log(`Loading StaffRecords page ${pageCount}...`);
-        
-        const response: SPHttpClientResponse = await props.context.spHttpClient.get(
-          nextLink,
-          SPHttpClient.configurations.v1
-        );
-        
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error(`Error fetching StaffRecords page ${pageCount}:`, response.status, errorText);
-          throw new Error(`Ошибка при загрузке данных StaffRecords: ${response.status} ${response.statusText}`);
-        }
-        
-        const results = await response.json();
-        const records = results.value;
-        console.log(`Loaded ${records.length} StaffRecords on page ${pageCount}`);
-        
-        // Добавляем записи к общему массиву
-        allRecords = [...allRecords, ...records];
-        
-        // Проверяем, есть ли еще страницы
-        nextLink = results["@odata.nextLink"] || null;
-        pageCount++;
-        
-        // Если слишком много страниц, прерываем цикл для безопасности
-        if (pageCount > 20) {
-          console.warn('Too many pages of StaffRecords, stopping at 20 pages.');
-          break;
-        }
+      // Загружаем данные StaffRecords, если они еще не загружены
+      let records = staffRecords;
+      if (records.length === 0) {
+        records = await sharePointService.loadStaffRecords();
+        setStaffRecords(records);
       }
       
-      console.log(`Total StaffRecords loaded: ${allRecords.length}`);
-      
-      // Выводим пример записи для отладки
-      if (allRecords.length > 0) {
-        console.log('StaffRecords sample (first record):', allRecords[0]);
+      if (records.length === 0) {
+        setFilteredStaffRecords([]);
+        setStaffRecordsGroups([]);
+        setDebugInfo("Не удалось загрузить данные StaffRecords");
+        return;
       }
       
-      // Проверяем, есть ли записи со StaffGroupId = 54
-      const recordsWithStaffGroup54 = allRecords.filter(r => r.StaffGroupId === 54);
-      console.log(`StaffRecords with StaffGroupId = 54: ${recordsWithStaffGroup54.length}`);
+      // Фильтруем записи
+      const { filtered, debugInfo } = sharePointService.filterStaffRecords(records, selectedExportItem);
       
-      // Находим уникальные значения StaffGroupId
-      const groupIdMap: { [key: string]: boolean } = {};
-      allRecords.forEach(r => {
-        groupIdMap[String(r.StaffGroupId)] = true;
-      });
-      const uniqueGroupIds = Object.keys(groupIdMap).map(key => isNaN(Number(key)) ? key : Number(key));
-      console.log('Unique StaffGroupId values in all StaffRecords:', uniqueGroupIds);
+      // Создаем группы и сортируем результаты по дате
+      const { sortedRecords, groups } = dataUtils.createGroupsFromRecords(filtered);
       
-      setStaffRecords(allRecords);
-      return allRecords;
+      setFilteredStaffRecords(sortedRecords);
+      setStaffRecordsGroups(groups);
+      setDebugInfo(debugInfo);
+      
     } catch (error) {
-      console.error('Error loading StaffRecords:', error);
-      setError(`Ошибка при загрузке StaffRecords: ${error.message}`);
-      return [];
+      console.error('Error filtering records:', error);
+      setError(`Ошибка при фильтрации записей: ${error.message}`);
+      setFilteredStaffRecords([]);
+      setStaffRecordsGroups([]);
     } finally {
       setIsLoadingStaffRecords(false);
     }
   };
-
-  // Функция для проверки существования файла Excel и поиска строки по дате
-  const checkExcelFile = async (filePath: string): Promise<IFileCheckResult> => {
-    try {
-      // Проверяем, указан ли путь к файлу
-      if (!filePath || filePath.trim() === '') {
-        return {
-          success: false,
-          message: 'Путь к файлу не указан в выбранной записи. Проверьте поле PathForSRSFile.'
-        };
-      }
-
-      // Удаляем начальный слеш из filePath, если он есть
-      const cleanPath = filePath.charAt(0) === '/' ? filePath.substring(1) : filePath;
-
-      // Формируем полный путь к файлу с правильным именем библиотеки
-      const fullPath = `${kpfaExcelUrl}/Shared Documents/${cleanPath}`;
-      const serverRelativePath = `/sites/StaffRecordSheets/Shared Documents/${cleanPath}`;
-      console.log(`Проверка существования файла: ${fullPath}`);
-
-      // API запрос для проверки существования файла
-      // Используем подход с получением свойств файла вместо его содержимого
-      const filePropsUrl = `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${serverRelativePath}')/Properties`;
-      
-      const response: SPHttpClientResponse = await props.context.spHttpClient.get(
-        filePropsUrl,
-        SPHttpClient.configurations.v1
-      );
-
-      if (response.ok) {
-        // Файл найден
-        // Теперь мы должны определить, какую строку искать (на основе даты)
-        let dateForSearch = "";
-        if (selectedItem && selectedItem.Date1) {
-          try {
-            const searchDate = new Date(selectedItem.Date1);
-            dateForSearch = convertDateFormatSRS(searchDate);
-            console.log(`Дата для поиска строки в Excel: ${dateForSearch}`);
-          } catch (e) {
-            console.error('Ошибка преобразования даты:', e);
-          }
-        }
-        
-        // Пока что мы только проверили наличие файла, но не выполняли поиск строки
-        // В реальном коде здесь будет логика поиска строки в Excel
-        // Пока используем заглушку: строка "не найдена"
-        const foundStringStatus = "Строка не найдена. Потребуется реализация поиска внутри Excel-файла.";
-        
-        return {
-          success: true,
-          message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Строка для поиска: "${dateForSearch}"\n\n3. Результат поиска строки: ${foundStringStatus}`,
-          filePath: fullPath
-        };
-      } else if (response.status === 404) {
-        // Файл не найден
-        return {
-          success: false,
-          message: `Файл не найден: ${fullPath}\nПроверьте путь и убедитесь, что файл существует.`
-        };
-      } else {
-        // Другая ошибка
-        const errorText = await response.text();
-        console.error('Error checking file:', response.status, errorText);
-        return {
-          success: false,
-          message: `Ошибка при проверке файла: ${response.status} ${response.statusText}`
-        };
-      }
-    } catch (error) {
-      console.error('Error in checkExcelFile:', error);
-      return {
-        success: false,
-        message: `Ошибка при проверке файла: ${error.message}`
-      };
-    }
-  };
-
-  // Функция для обработки нажатия кнопки Export
-  const handleExport = async (): Promise<void> => {
+  
+  // Функция для обработки нажатия кнопки Export (теперь принимает groupKey - ключ группы, из которой нажали на экспорт)
+  const handleExport = async (groupKey?: string): Promise<void> => {
     if (!selectedItem) {
       setDialogTitle('Ошибка экспорта');
       setDialogMessage('Не выбрана запись для экспорта. Выберите запись из верхней таблицы.');
@@ -369,8 +180,21 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
       // Получаем путь к файлу из выбранной записи
       const filePath = selectedItem.PathForSRSFile;
       
-      // Проверяем существование файла
-      const checkResult = await checkExcelFile(filePath);
+      // Определяем дату для поиска - из заголовка группы, если указан
+      let groupDate: Date | undefined;
+      
+      if (groupKey) {
+        // Пытаемся использовать ключ группы как дату
+        try {
+          groupDate = new Date(groupKey);
+          console.log(`Используем дату группы для экспорта: ${groupKey} (${groupDate.toISOString()})`);
+        } catch (e) {
+          console.error('Не удалось преобразовать ключ группы в дату:', groupKey, e);
+        }
+      }
+      
+      // Проверяем существование файла, передавая дату группы
+      const checkResult = await excelService.checkExcelFile(filePath, selectedItem, groupDate);
       
       if (checkResult.success) {
         // Файл найден
@@ -395,297 +219,13 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
       setIsExporting(false);
     }
   };
-
-  // Функция для проверки, является ли смена "пустой" (время 00:00)
-  const isEmptyShift = (record: IStaffRecordsItem): boolean => {
-    const shiftDate1 = record.ShiftDate1 || '';
-    const shiftDate2 = record.ShiftDate2 || '';
-    
-    // Используем indexOf вместо endsWith для лучшей совместимости
-    const isShiftDate1Empty = shiftDate1.indexOf('T00:00:00Z') === shiftDate1.length - 10 || 
-                            shiftDate1.indexOf('T00:00:00') === shiftDate1.length - 9;
-    
-    const isShiftDate2Empty = shiftDate2.indexOf('T00:00:00Z') === shiftDate2.length - 10 || 
-                            shiftDate2.indexOf('T00:00:00') === shiftDate2.length - 9;
-    
-    return isShiftDate1Empty && isShiftDate2Empty;
-  };
-
-  // Функция для создания групп на основе дат
-  const createGroupsFromRecords = (records: IStaffRecordsItem[]): void => {
-    if (!records || records.length === 0) {
-      setStaffRecordsGroups([]);
-      return;
-    }
-    
-    // Сортируем записи по дате для группировки
-    const recordsByDate = [...records].sort((a, b) => {
-      const dateA = new Date(a.Date);
-      const dateB = new Date(b.Date);
-      return dateA.getTime() - dateB.getTime();
-    });
-    
-    // Группируем записи по дате
-    const recordGroups: { [key: string]: IStaffRecordsItem[] } = {};
-    recordsByDate.forEach(record => {
-      // Извлекаем только дату без времени
-      const datePart = record.Date.split('T')[0];
-      
-      if (!recordGroups[datePart]) {
-        recordGroups[datePart] = [];
-      }
-      
-      recordGroups[datePart].push(record);
-    });
-    
-    // Сортируем записи внутри каждой группы:
-    // - Сначала по ShiftDate1
-    // - Пустые смены в конце
-    Object.keys(recordGroups).forEach(date => {
-      recordGroups[date].sort((a, b) => {
-        // Проверяем, является ли какая-либо из смен "пустой"
-        const aEmpty = isEmptyShift(a);
-        const bEmpty = isEmptyShift(b);
-        
-        // Если одна пустая, а другая нет, пустая идет в конец
-        if (aEmpty && !bEmpty) return 1;
-        if (!aEmpty && bEmpty) return -1;
-        
-        // Если обе пустые или обе не пустые, сортируем по ShiftDate1
-        const timeA = new Date(a.ShiftDate1 || a.Date).getTime();
-        const timeB = new Date(b.ShiftDate1 || b.Date).getTime();
-        return timeA - timeB;
-      });
-    });
-    
-    // Готовим отсортированный массив всех записей
-    const sortedRecords: IStaffRecordsItem[] = [];
-    const dates = Object.keys(recordGroups).sort(); // Сортируем даты
-    
-    dates.forEach(date => {
-      sortedRecords.push(...recordGroups[date]);
-    });
-    
-    // Сохраняем отсортированные записи
-    setFilteredStaffRecords(sortedRecords);
-    
-    // Создаем группы для DetailsList
-    const groups: IGroup[] = [];
-    let startIndex = 0;
-    
-    dates.forEach(date => {
-      const count = recordGroups[date].length;
-      
-      groups.push({
-        key: date,
-        name: formatDate(date),
-        startIndex,
-        count,
-        level: 0,
-        isCollapsed: false
-      });
-      
-      startIndex += count;
-    });
-    
-    console.log('Created groups with custom sorting:', groups);
-    setStaffRecordsGroups(groups);
-  };
   
-  // Функция для форматирования даты
-  const formatDate = (dateString: string): string => {
-    const options: Intl.DateTimeFormatOptions = { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
-    };
-    
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('ru-RU', options);
-    } catch (e) {
-      console.error('Error formatting date:', dateString, e);
-      return dateString;
-    }
-  };
-
-  // Функция для фильтрации StaffRecords на основе выбранной строки ExportToSRS
-  const handleFilterStaffRecords = async (selectedExportItem: IExportToSRSItem): Promise<void> => {
-    console.log('Filtering staff records for:', selectedExportItem);
-    
-    // Подробная информация о выбранной записи для отладки
-    console.log('Selected record details:', {
-      Id: selectedExportItem.Id,
-      Date1: selectedExportItem.Date1,
-      Date2: selectedExportItem.Date2,
-      ManagerId: selectedExportItem.ManagerId,
-      StaffGroupId: selectedExportItem.StaffGroupId,
-      StaffMemberId: selectedExportItem.StaffMemberId,
-      PathForSRSFile: selectedExportItem.PathForSRSFile
-    });
-    
-    setIsLoadingStaffRecords(true);
-    setDebugInfo(null);
-    
-    try {
-      // Загружаем данные StaffRecords, если они еще не загружены
-      let records = staffRecords;
-      if (records.length === 0) {
-        records = await loadStaffRecords();
-      }
-      
-      if (records.length === 0) {
-        setFilteredStaffRecords([]);
-        setStaffRecordsGroups([]);
-        setDebugInfo("Не удалось загрузить данные StaffRecords");
-        return;
-      }
-      
-      // Подготавливаем строки с информацией об отладке
-      let debugLines: string[] = [];
-      
-      // Преобразуем строковые даты в объекты Date для сравнения
-      let date1: Date;
-      let date2: Date;
-      
-      try {
-        date1 = new Date(selectedExportItem.Date1);
-        date2 = new Date(selectedExportItem.Date2);
-        
-        debugLines.push(`Date1 (исходная): ${selectedExportItem.Date1}`);
-        debugLines.push(`Date1 (преобразованная): ${date1.toISOString()}`);
-        debugLines.push(`Date2 (исходная): ${selectedExportItem.Date2}`);
-        debugLines.push(`Date2 (преобразованная): ${date2.toISOString()}`);
-      } catch (e) {
-        debugLines.push(`Ошибка при преобразовании дат: ${e.message}`);
-        date1 = new Date(0); // Минимальная дата
-        date2 = new Date(); // Текущая дата
-      }
-      
-      // Находим уникальные значения StaffGroupId в записях
-      const groupIdMap: { [key: string]: boolean } = {};
-      records.forEach(r => {
-        groupIdMap[String(r.StaffGroupId)] = true;
-      });
-      const uniqueGroupIds = Object.keys(groupIdMap).map(key => isNaN(Number(key)) ? key : Number(key));
-      debugLines.push(`Уникальные значения StaffGroupId в StaffRecords: ${uniqueGroupIds.join(', ')}`);
-      
-      // Проверка каждого условия фильтрации отдельно
-      const matchingDate = records.filter(record => {
-        try {
-          const recordDate = new Date(record.Date);
-          return recordDate >= date1 && recordDate <= date2;
-        } catch (e) {
-          console.error('Error comparing dates for record:', record.Id, e);
-          return false;
-        }
-      });
-      
-      const matchingManager = records.filter(record => 
-        record.ManagerId === selectedExportItem.ManagerId
-      );
-      
-      const matchingGroup = records.filter(record => 
-        record.StaffGroupId === selectedExportItem.StaffGroupId
-      );
-      
-      const matchingStaffMember = records.filter(record => 
-        record.StaffMemberId === selectedExportItem.StaffMemberId
-      );
-      
-      debugLines.push(`Всего записей StaffRecords: ${records.length}`);
-      debugLines.push(`Записей, соответствующих условию по дате: ${matchingDate.length}`);
-      debugLines.push(`Записей, соответствующих условию по ManagerId (${selectedExportItem.ManagerId}): ${matchingManager.length}`);
-      debugLines.push(`Записей, соответствующих условию по StaffGroupId (${selectedExportItem.StaffGroupId}): ${matchingGroup.length}`);
-      debugLines.push(`Записей, соответствующих условию по StaffMemberId (${selectedExportItem.StaffMemberId}): ${matchingStaffMember.length}`);
-      debugLines.push(`Path For SRS File: ${selectedExportItem.PathForSRSFile || 'Not specified'}`);
-      
-      // Применяем все условия фильтрации
-      const filtered = records.filter((record: IStaffRecordsItem) => {
-        try {
-          const recordDate = new Date(record.Date);
-          
-          const dateCondition = recordDate >= date1 && recordDate <= date2;
-          const managerCondition = record.ManagerId === selectedExportItem.ManagerId;
-          const groupCondition = record.StaffGroupId === selectedExportItem.StaffGroupId;
-          const staffMemberCondition = record.StaffMemberId === selectedExportItem.StaffMemberId;
-          
-          return dateCondition && managerCondition && groupCondition && staffMemberCondition;
-        } catch (e) {
-          console.error('Error filtering record:', record.Id, e);
-          return false;
-        }
-      });
-      
-      debugLines.push(`Найдено записей, соответствующих всем условиям: ${filtered.length}`);
-      
-      if (filtered.length > 0) {
-        debugLines.push(`Пример записи, соответствующей всем условиям:`);
-        debugLines.push(`- Id: ${filtered[0].Id}`);
-        debugLines.push(`- Date: ${filtered[0].Date}`);
-        debugLines.push(`- ShiftDate1: ${filtered[0].ShiftDate1}`);
-        debugLines.push(`- ShiftDate2: ${filtered[0].ShiftDate2}`);
-        debugLines.push(`- ManagerId: ${filtered[0].ManagerId}`);
-        debugLines.push(`- StaffGroupId: ${filtered[0].StaffGroupId}`);
-        debugLines.push(`- StaffMemberId: ${filtered[0].StaffMemberId}`);
-        debugLines.push(`- TypeOfLeaveId: ${filtered[0].TypeOfLeaveId}`);
-        debugLines.push(`- Contract: ${filtered[0].Contract}`);
-        debugLines.push(`- TimeForLunch: ${filtered[0].TimeForLunch}`);
-        debugLines.push(`- LeaveTime: ${filtered[0].LeaveTime}`);
-        debugLines.push(`- ReliefHours: ${filtered[0].ReliefHours}`);
-        debugLines.push(`- LeaveNote: ${filtered[0].LeaveNote ? filtered[0].LeaveNote.substring(0, 30) + '...' : ''}`);
-        debugLines.push(`- Checked: ${filtered[0].Checked}`);
-        debugLines.push(`- ExportResult: ${filtered[0].ExportResult}`);
-      }
-      
-      console.log(debugLines.join('\n'));
-      setDebugInfo(debugLines.join('\n'));
-      
-      console.log(`Found ${filtered.length} matching StaffRecords with all conditions`);
-      
-      // Создаем группы и сортируем результаты по дате
-      createGroupsFromRecords(filtered);
-      
-    } catch (error) {
-      console.error('Error filtering records:', error);
-      setError(`Ошибка при фильтрации записей: ${error.message}`);
-      setFilteredStaffRecords([]);
-      setStaffRecordsGroups([]);
-    } finally {
-      setIsLoadingStaffRecords(false);
-    }
-  };
-
-  // Функция для преобразования даты в формат "1st of Jan" и т.д.
-  const convertDateFormatSRS = (inputDate: Date): string => {
-    try {
-      // Получаем число месяца (1-31)
-      const day = inputDate.getDate();
-      
-      // Определяем суффикс (st, nd, rd, th)
-      let suffix = "th";
-      if (day % 10 === 1 && day % 100 !== 11) {
-        suffix = "st";
-      } else if (day % 10 === 2 && day % 100 !== 12) {
-        suffix = "nd";
-      } else if (day % 10 === 3 && day % 100 !== 13) {
-        suffix = "rd";
-      }
-      
-      // Получаем месяц (0-11) и преобразуем в сокращение
-      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-      const month = monthNames[inputDate.getMonth()];
-      
-      // Формируем итоговую строку
-      return `${day}${suffix} of ${month}`;
-    } catch (error) {
-      console.error('Error converting date:', error);
-      return "Invalid Date";
-    }
-  };
+  // Рендер заголовков групп с кнопкой экспорта
   const onRenderGroupHeader = (props?: IGroupHeaderProps): JSX.Element | null => {
     if (!props) return null;
+    
+    // Извлекаем key группы (это датa в формате ISO)
+    const groupKey = props.group?.key as string;
     
     return (
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f0f0f0', padding: '10px' }}>
@@ -705,7 +245,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
         />
         <PrimaryButton
           text={isExporting ? "Экспорт..." : "Экспортировать"}
-          onClick={() => handleExport()}
+          onClick={() => handleExport(groupKey)} // Передаем ключ группы в метод экспорта
           disabled={isExportDisabled()}
           styles={{ root: { minWidth: '120px' } }}
         />
@@ -742,7 +282,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
             )}
             
             {isLoading ? (
-              <Spinner label={`Loading data from ${kpfaDataUrl}...`} size={SpinnerSize.medium} />
+              <Spinner label={`Loading data from SharePoint...`} size={SpinnerSize.medium} />
             ) : (
               <>
                 {items.length === 0 && !error ? (
