@@ -65,11 +65,6 @@ export class ExcelService {
     this.context = context;
   }
 
-  // Вспомогательная функция для нормализации строки (удаляет пробелы, переводит в нижний регистр)
-  //private normalizeString(str: string): string {
-    //return str.replace(/\s+/g, '').toLowerCase();
-  //}
-
   // Функция для проверки существования файла Excel и поиска строки по дате
   public async checkExcelFile(
     filePath: string, 
@@ -177,19 +172,56 @@ export class ExcelService {
         // Выводим информацию о листах в книге для отладки
         console.log('Листы в книге:', workbook.SheetNames);
         
-        // Просто ищем второй лист в файле, учитывая, что индексация начинается с 0
-        if (workbook.SheetNames.length < 2) {
+        // Поиск листа по имени "2.Employee Data Entry"
+        const targetSheetPattern = "2.Employee Data Entry";
+        let targetSheetName: string | null = null;
+        let findMethod = ""; // Переменная для хранения метода, которым был найден лист
+        
+        // Алгоритм поиска листа:
+        // 1. Ищем точное совпадение
+        // 2. Ищем лист, начинающийся с "2.Employee"
+        // 3. Если не нашли, берем второй лист
+        
+        // 1. Сначала пытаемся найти точное совпадение
+        for (let i = 0; i < workbook.SheetNames.length; i++) {
+          const sheetName = workbook.SheetNames[i];
+          if (sheetName === targetSheetPattern) {
+            targetSheetName = sheetName;
+            findMethod = "точное совпадение";
+            break;
+          }
+        }
+        
+        // 2. Если точное совпадение не найдено, ищем по началу строки
+        if (!targetSheetName) {
+          for (let i = 0; i < workbook.SheetNames.length; i++) {
+            const sheetName = workbook.SheetNames[i];
+            if (sheetName.indexOf("2.Employee") === 0) {
+              targetSheetName = sheetName;
+              findMethod = "частичное совпадение (по началу имени)";
+              break;
+            }
+          }
+        }
+        
+        // 3. Если совпадение по имени не найдено, берем второй лист (индекс 1)
+        if (!targetSheetName && workbook.SheetNames.length > 1) {
+          targetSheetName = workbook.SheetNames[1];
+          findMethod = "использован второй лист";
+          console.log(`Лист "${targetSheetPattern}" не найден. Используем второй лист: "${targetSheetName}"`);
+        }
+        
+        // Если нет подходящего листа, возвращаем ошибку
+        if (!targetSheetName) {
           return {
             success: true,
-            message: `Файл найден, но в нём меньше двух листов. Доступные листы: ${workbook.SheetNames.join(", ")}. Поиск строки: "${dateForSearch}".`,
+            message: `Файл найден, но подходящий лист не найден. Доступные листы: ${workbook.SheetNames.join(", ")}. Поиск строки: "${dateForSearch}".`,
             filePath: fullPath,
             rowFound: false
           };
         }
         
-        // Просто берем второй лист (индекс 1, так как индексация начинается с 0)
-        const targetSheetName = workbook.SheetNames[1];
-        console.log(`Используем второй лист: "${targetSheetName}"`);
+        console.log(`Используем лист: "${targetSheetName}" (метод поиска: ${findMethod})`);
         
         const worksheet = workbook.Sheets[targetSheetName];
         
@@ -223,7 +255,7 @@ export class ExcelService {
         if (rowFound) {
           return {
             success: true,
-            message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}".\n\n3. Строка найдена в позиции ${rowNumber}.`,
+            message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}" (метод поиска листа: ${findMethod}).\n\n3. Строка найдена в позиции ${rowNumber}.`,
             filePath: fullPath,
             rowFound: true,
             rowNumber: rowNumber
@@ -231,7 +263,7 @@ export class ExcelService {
         } else {
           return {
             success: true,
-            message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен в листе "${targetSheetName}", но строка не найдена.\n\n3. Проверьте формат даты и содержимое файла Excel.`,
+            message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен в листе "${targetSheetName}" (метод поиска листа: ${findMethod}), но строка не найдена.\n\n3. Проверьте формат даты и содержимое файла Excel.`,
             filePath: fullPath,
             rowFound: false
           };
