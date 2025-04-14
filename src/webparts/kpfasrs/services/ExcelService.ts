@@ -415,16 +415,39 @@ export class ExcelService {
             const updatedContent = await workbook.xlsx.writeBuffer();
             
             // Отправляем обновленный файл на SharePoint
-            await this.updateExcelFile(serverRelativePath, updatedContent);
-            
-            return {
-              success: true,
-              message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}" (метод поиска листа: ${findMethod}).\n\n3. Строка найдена в позиции ${rowNumber}.\n\n4. Значение "20:20" записано в ячейку B${rowNumber} и файл успешно обновлен.`,
-              filePath: fullPath,
-              rowFound: true,
-              rowNumber: rowNumber,
-              cellUpdated: true
-            };
+            try {
+              await this.updateExcelFile(serverRelativePath, updatedContent);
+              return {
+                success: true,
+                message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}" (метод поиска листа: ${findMethod}).\n\n3. Строка найдена в позиции ${rowNumber}.\n\n4. Значение "20:20" записано в ячейку B${rowNumber} и файл успешно обновлен.`,
+                filePath: fullPath,
+                rowFound: true,
+                rowNumber: rowNumber,
+                cellUpdated: true
+              };
+            } catch (updateError) {
+              // Проверяем, содержит ли сообщение ошибки информацию о блокировке файла
+              const errorMessage = updateError.message || '';
+              if (errorMessage.includes('423') || errorMessage.includes('заблокирован')) {
+                return {
+                  success: true,
+                  message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}" (метод поиска листа: ${findMethod}).\n\n3. Строка найдена в позиции ${rowNumber}.\n\n4. Не удалось записать значение в ячейку B${rowNumber}: файл заблокирован. Возможно, файл Excel открыт для редактирования другим пользователем. Пожалуйста, убедитесь, что файл закрыт всеми пользователями и повторите попытку.`,
+                  filePath: fullPath,
+                  rowFound: true,
+                  rowNumber: rowNumber,
+                  cellUpdated: false
+                };
+              } else {
+                return {
+                  success: true,
+                  message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}" (метод поиска листа: ${findMethod}).\n\n3. Строка найдена в позиции ${rowNumber}.\n\n4. Не удалось записать значение в ячейку B${rowNumber}: ${updateError.message}`,
+                  filePath: fullPath,
+                  rowFound: true,
+                  rowNumber: rowNumber,
+                  cellUpdated: false
+                };
+              }
+            }
           } catch (error) {
             console.error('Error updating cell:', error);
             return {
@@ -504,7 +527,13 @@ export class ExcelService {
       if (!updateResponse.ok) {
         const errorText = await updateResponse.text();
         console.error('Error updating file:', updateResponse.status, errorText);
-        throw new Error(`Ошибка обновления файла: ${updateResponse.status} ${updateResponse.statusText}`);
+        
+        // Специальная обработка ошибки 423 (Locked)
+        if (updateResponse.status === 423) {
+          throw new Error(`Файл заблокирован (код 423). Возможно, файл открыт для редактирования другим пользователем. Пожалуйста, убедитесь, что файл Excel закрыт всеми пользователями и повторите попытку.`);
+        } else {
+          throw new Error(`Ошибка обновления файла: ${updateResponse.status} ${updateResponse.statusText}`);
+        }
       }
       
       console.log('Файл успешно обновлен.');
