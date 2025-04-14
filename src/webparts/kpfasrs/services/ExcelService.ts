@@ -24,6 +24,7 @@ export interface IExportToSRSItem {
   Condition: number;
   GroupMemberId: number;
   PathForSRSFile: string;
+  email?: string; // Добавляем опциональное поле для электронной почты
 }
 
 // Интерфейс для данных из списка StaffRecords
@@ -173,32 +174,6 @@ export class ExcelService {
         };
       }
       
-      // API запрос для проверки существования файла
-      const filePropsUrl = `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${serverRelativePath}')/Properties`;
-      
-      const response: SPHttpClientResponse = await this.context.spHttpClient.get(
-        filePropsUrl,
-        SPHttpClient.configurations.v1
-      );
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          // Файл не найден
-          return {
-            success: false,
-            message: `Файл не найден: ${fullPath}\nПроверьте путь и убедитесь, что файл существует.`
-          };
-        } else {
-          // Другая ошибка
-          const errorText = await response.text();
-          console.error('Error checking file:', response.status, errorText);
-          return {
-            success: false,
-            message: `Ошибка при проверке файла: ${response.status} ${response.statusText}`
-          };
-        }
-      }
-      
       // Файл найден, теперь загружаем содержимое файла как бинарные данные
       const fileContentResponse: SPHttpClientResponse = await this.context.spHttpClient.get(
         `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${serverRelativePath}')/$value`,
@@ -311,10 +286,6 @@ export class ExcelService {
         });
         console.log('Первые 20 значений в колонке A:', firstColumnValues.join('\n'));
         
-        // Ищем строку, где в колонке A находится искомая дата
-        let rowFound = false;
-        let rowNumber = -1;
-        
         // Нормализуем значение для поиска
         const normalizedSearch = dateForSearch.trim().toLowerCase();
         const shortFormatSearch = normalizedSearch.replace(" of ", " ");
@@ -330,6 +301,9 @@ export class ExcelService {
         console.log(`Hex-дамп строки поиска: ${searchHexDump}`);
         
         // Перебираем строки в листе
+        let rowFound = false;
+        let rowNumber = -1;
+        
         targetWorksheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
           // Получаем значение в первой ячейке (колонка A)
           const cellValue = row.getCell(1).text;
@@ -417,6 +391,7 @@ export class ExcelService {
             // Отправляем обновленный файл на SharePoint
             try {
               await this.updateExcelFile(serverRelativePath, updatedContent);
+              
               return {
                 success: true,
                 message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}" (метод поиска листа: ${findMethod}).\n\n3. Строка найдена в позиции ${rowNumber}.\n\n4. Значение "20:20" записано в ячейку B${rowNumber} и файл успешно обновлен.`,
@@ -527,13 +502,7 @@ export class ExcelService {
       if (!updateResponse.ok) {
         const errorText = await updateResponse.text();
         console.error('Error updating file:', updateResponse.status, errorText);
-        
-        // Специальная обработка ошибки 423 (Locked)
-        if (updateResponse.status === 423) {
-          throw new Error(`Файл заблокирован (код 423). Возможно, файл открыт для редактирования другим пользователем. Пожалуйста, убедитесь, что файл Excel закрыт всеми пользователями и повторите попытку.`);
-        } else {
-          throw new Error(`Ошибка обновления файла: ${updateResponse.status} ${updateResponse.statusText}`);
-        }
+        throw new Error(`Ошибка обновления файла: ${updateResponse.status} ${updateResponse.statusText}`);
       }
       
       console.log('Файл успешно обновлен.');

@@ -18,7 +18,7 @@ export class SharePointService {
       console.log('Fetching data from ExportToSRS list at:', kpfaDataUrl);
       
       const endpoint = `${kpfaDataUrl}/_api/web/lists/getbytitle('ExportToSRS')/items`;
-      const select = "Id,Title,StaffMemberId,Date1,Date2,ManagerId,StaffGroupId,Condition,GroupMemberId,PathForSRSFile";
+      const select = "Id,Title,StaffMemberId,Date1,Date2,ManagerId,StaffGroupId,Condition,GroupMemberId,PathForSRSFile,email";
       const queryUrl = `${endpoint}?$select=${select}`;
       
       const response: SPHttpClientResponse = await this.context.spHttpClient.get(
@@ -138,7 +138,8 @@ export class SharePointService {
       ManagerId: selectedExportItem.ManagerId,
       StaffGroupId: selectedExportItem.StaffGroupId,
       StaffMemberId: selectedExportItem.StaffMemberId,
-      PathForSRSFile: selectedExportItem.PathForSRSFile
+      PathForSRSFile: selectedExportItem.PathForSRSFile,
+      email: selectedExportItem.email // Выводим Email, если он есть
     });
     
     // Подготавливаем строки с информацией об отладке
@@ -245,5 +246,60 @@ export class SharePointService {
       filtered,
       debugInfo: debugLines.join('\n')
     };
+  }
+
+  // Функция для отправки email через SharePoint
+  public async sendEmail(to: string[], subject: string, body: string): Promise<boolean> {
+    try {
+      // URL для REST API SharePoint для отправки электронной почты
+      const emailUrl = `${this.context.pageContext.web.absoluteUrl}/_api/SP.Utilities.Utility.SendEmail`;
+      
+      // Формируем данные для запроса
+      const emailProps = {
+        properties: {
+          __metadata: { type: 'SP.Utilities.EmailProperties' },
+          To: { results: to },
+          Subject: subject,
+          Body: body
+        }
+      };
+      
+      // Получаем токен формы
+      const digestResponse = await this.context.spHttpClient.post(
+        `${this.context.pageContext.web.absoluteUrl}/_api/contextinfo`,
+        SPHttpClient.configurations.v1,
+        {
+          headers: {
+            'Accept': 'application/json;odata=nometadata'
+          }
+        }
+      );
+      
+      if (!digestResponse.ok) {
+        console.error(`Error getting digest: ${digestResponse.status}`);
+        return false;
+      }
+      
+      const digestValue = (await digestResponse.json()).FormDigestValue;
+      
+      // Отправляем запрос на отправку письма
+      const emailResponse = await this.context.spHttpClient.post(
+        emailUrl,
+        SPHttpClient.configurations.v1,
+        {
+          headers: {
+            'Accept': 'application/json;odata=nometadata',
+            'Content-Type': 'application/json;odata=verbose',
+            'X-RequestDigest': digestValue
+          },
+          body: JSON.stringify(emailProps)
+        }
+      );
+      
+      return emailResponse.ok;
+    } catch (error) {
+      console.error('Error sending email:', error);
+      return false;
+    }
   }
 }
