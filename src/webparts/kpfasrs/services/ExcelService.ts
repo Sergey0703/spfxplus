@@ -84,10 +84,62 @@ export class ExcelService {
       // Удаляем начальный слеш из filePath, если он есть
       const cleanPath = filePath.charAt(0) === '/' ? filePath.substring(1) : filePath;
 
-      // Формируем полный путь к файлу с правильным именем библиотеки
-      const fullPath = `${kpfaExcelUrl}/Shared Documents/${cleanPath}`;
-      const serverRelativePath = `/sites/StaffRecordSheets/Shared Documents/${cleanPath}`;
-      console.log(`Проверка существования файла: ${fullPath}`);
+      // Пробуем разные варианты путей к файлу
+      const possiblePaths = [
+        // Путь 1: Как указано в PathForSRSFile
+        cleanPath,
+        // Путь 2: Обрезанный путь (без указания Shared Documents)
+        cleanPath.replace('Shared Documents/', ''),
+        // Путь 3: Путь непосредственно к файлу без структуры каталогов
+        cleanPath.split('/').pop() || '',
+        // Путь 4: Альтернативный путь в другой структуре папок
+        `Kilcummin Residential Services/Lohan Lodge/SRSExport/Sinead Twomey 2024Test.xlsx`
+      ];
+
+      // Формируем полные серверные пути для проверки
+      const serverPaths = possiblePaths.map(path => {
+        if (path) {
+          return `/sites/StaffRecordSheets/Shared Documents/${path}`;
+        }
+        return ''; // Пропускаем пустые пути
+      }).filter(p => p !== '');
+
+      console.log('Проверяем возможные пути к файлу:');
+      serverPaths.forEach(p => console.log(` - ${p}`));
+
+      // Проверяем каждый путь по очереди, пока не найдем существующий файл
+      let fileExists = false;
+      let serverRelativePath = '';
+      let fullPath = '';
+
+      for (const path of serverPaths) {
+        try {
+          console.log(`Проверка существования файла: ${path}`);
+          const filePropsUrl = `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${path}')/Properties`;
+          
+          const response: SPHttpClientResponse = await this.context.spHttpClient.get(
+            filePropsUrl,
+            SPHttpClient.configurations.v1
+          );
+
+          if (response.ok) {
+            fileExists = true;
+            serverRelativePath = path;
+            fullPath = `${kpfaExcelUrl}${path.replace('/sites/StaffRecordSheets', '')}`;
+            console.log(`Файл найден по пути: ${fullPath}`);
+            break;
+          }
+        } catch (error) {
+          console.log(`Файл не найден по пути: ${path}`, error);
+        }
+      }
+
+      if (!fileExists) {
+        return {
+          success: false,
+          message: `Файл не найден ни по одному из проверенных путей:\n${serverPaths.join('\n')}\n\nПроверьте путь и убедитесь, что файл существует.`
+        };
+      }
 
       // Определяем строку для поиска на основе даты
       let dateForSearch = "";
@@ -221,23 +273,132 @@ export class ExcelService {
         const targetSheetName = targetWorksheet.name;
         console.log(`Используем лист: "${targetSheetName}" (метод поиска: ${findMethod})`);
         
+        // Вывод первых 20 значений из колонки A для отладки
+        const firstColumnValues: string[] = [];
+        
+        // Переменные для конкретной строки 1008
+        let cellA1008Value = "";
+        let cellA1008Details = "";
+        let cellA1008HexDump = "";
+        
+        targetWorksheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
+          // Сохраняем первые 20 значений для отладки
+          if (rowNum <= 20) {
+            const cellValue = row.getCell(1).text;
+            firstColumnValues.push(`Строка ${rowNum}: "${cellValue}"`);
+          }
+          
+          // Проверяем строку 1008
+          if (rowNum === 1008) {
+            const cell = row.getCell(1);
+            cellA1008Value = cell.text || "";
+            
+            // Подробная информация о ячейке
+            cellA1008Details = `Тип: ${typeof cellA1008Value}, Длина: ${cellA1008Value.length}`;
+            
+            // Создаем hex-дамп для сравнения каждого символа
+            let hexDump = "";
+            for (let i = 0; i < cellA1008Value.length; i++) {
+              const charCode = cellA1008Value.charCodeAt(i);
+              hexDump += `${cellA1008Value[i]} (${charCode.toString(16)}), `;
+            }
+            cellA1008HexDump = hexDump;
+            
+            console.log(`Ячейка A1008 найдена! Значение: "${cellA1008Value}"`);
+            console.log(`Детали ячейки A1008: ${cellA1008Details}`);
+            console.log(`Hex-дамп ячейки A1008: ${cellA1008HexDump}`);
+          }
+        });
+        console.log('Первые 20 значений в колонке A:', firstColumnValues.join('\n'));
+        
         // Ищем строку, где в колонке A находится искомая дата
         let rowFound = false;
         let rowNumber = -1;
+        
+        // Нормализуем значение для поиска
+        const normalizedSearch = dateForSearch.trim().toLowerCase();
+        const shortFormatSearch = normalizedSearch.replace(" of ", " ");
+        
+        // Создаем hex-дамп для строки поиска для сравнения
+        let searchHexDump = "";
+        for (let i = 0; i < dateForSearch.length; i++) {
+            const charCode = dateForSearch.charCodeAt(i);
+            searchHexDump += `${dateForSearch[i]} (${charCode.toString(16)}), `;
+        }
+        console.log(`Строка поиска: "${dateForSearch}"`);
+        console.log(`Тип: ${typeof dateForSearch}, Длина: ${dateForSearch.length}`);
+        console.log(`Hex-дамп строки поиска: ${searchHexDump}`);
         
         // Перебираем строки в листе
         targetWorksheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
           // Получаем значение в первой ячейке (колонка A)
           const cellValue = row.getCell(1).text;
           
+          if (!cellValue) return; // Пропускаем пустые ячейки
+          
           console.log(`Проверка строки ${rowNum}, значение: "${cellValue}"`);
           
-          if (cellValue === dateForSearch) {
+          // Нормализуем значение ячейки
+          const normalizedCell = cellValue.trim().toLowerCase();
+          const shortFormatCell = normalizedCell.replace(" of ", " ");
+          
+          // Если это строка 1008, дополнительно выводим информацию для сравнения
+          if (rowNum === 1008) {
+            console.log(`Сравнение в строке 1008:`);
+            console.log(`- Значение ячейки: "${cellValue}"`);
+            console.log(`- Значение ячейки после нормализации: "${normalizedCell}"`);
+            console.log(`- Искомая строка: "${dateForSearch}"`);
+            console.log(`- Искомая строка после нормализации: "${normalizedSearch}"`);
+            console.log(`- Равны ли значения без учета регистра: ${normalizedCell === normalizedSearch}`);
+            
+            // Проверяем посимвольно для выявления различий
+            console.log(`- Посимвольное сравнение:`);
+            const maxLength = Math.max(normalizedCell.length, normalizedSearch.length);
+            for (let i = 0; i < maxLength; i++) {
+              const cellChar = i < normalizedCell.length ? normalizedCell.charCodeAt(i) : -1;
+              const searchChar = i < normalizedSearch.length ? normalizedSearch.charCodeAt(i) : -1;
+              console.log(`  Позиция ${i}: ${normalizedCell[i] || ''} (${cellChar}) vs ${normalizedSearch[i] || ''} (${searchChar}) - ${cellChar === searchChar ? 'совпадает' : 'отличается'}`);
+            }
+          }
+          
+          // Проверяем различные варианты написания даты
+          if (normalizedCell === normalizedSearch) {
             rowFound = true;
             rowNumber = rowNum;
-            console.log(`Строка найдена! Номер строки: ${rowNumber}`);
-            // Прерываем итерацию, так как строка найдена
+            console.log(`Строка найдена! Номер строки: ${rowNumber}, точное совпадение`);
             return false;
+          }
+          
+          // Проверяем сокращенный формат (без "of")
+          if (shortFormatCell === shortFormatSearch || 
+              shortFormatCell === normalizedSearch || 
+              normalizedCell === shortFormatSearch) {
+            rowFound = true;
+            rowNumber = rowNum;
+            console.log(`Строка найдена! Номер строки: ${rowNumber}, альтернативный формат`);
+            return false;
+          }
+          
+          // Проверяем на совпадение день и месяц (могут быть разные форматы суффиксов)
+          if (rowNum === 1008) {
+            // Проверка на совпадение по шаблону "1(st|nd|rd|th) of Dec" без учета суффиксов
+            const regexCellMatch = normalizedCell.match(/(\d+)(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]{3})/i);
+            const regexSearchMatch = normalizedSearch.match(/(\d+)(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]{3})/i);
+            
+            if (regexCellMatch && regexSearchMatch) {
+              const cellDay = regexCellMatch[1];
+              const cellMonth = regexCellMatch[2].toLowerCase();
+              const searchDay = regexSearchMatch[1];
+              const searchMonth = regexSearchMatch[2].toLowerCase();
+              
+              console.log(`- Извлечение по шаблону для строки 1008:`);
+              console.log(`  Ячейка: День=${cellDay}, Месяц=${cellMonth}`);
+              console.log(`  Поиск: День=${searchDay}, Месяц=${searchMonth}`);
+              
+              if (cellDay === searchDay && cellMonth === searchMonth) {
+                console.log(`  Дни и месяцы совпадают!`);
+              }
+            }
           }
         });
         
@@ -276,9 +437,21 @@ export class ExcelService {
             };
           }
         } else {
+          // Проверяем, есть ли ячейка A1008 и сравниваем ее со строкой поиска
+          let comparisonInfo = "";
+          if (cellA1008Value) {
+            comparisonInfo = `\n\n5. Сравнение ячейки A1008 с искомой строкой:\n` +
+              `   - Значение в A1008: "${cellA1008Value}"\n` +
+              `   - Искомая строка: "${dateForSearch}"\n` +
+              `   - Значение ячейки в нижнем регистре: "${cellA1008Value.toLowerCase()}"\n` +
+              `   - Искомая строка в нижнем регистре: "${dateForSearch.toLowerCase()}"\n` +
+              `   - Значение ячейки без пробелов: "${cellA1008Value.trim()}"\n` +
+              `   - Искомая строка без пробелов: "${dateForSearch.trim()}"\n`;
+          }
+          
           return {
             success: true,
-            message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен в листе "${targetSheetName}" (метод поиска листа: ${findMethod}), но строка не найдена.\n\n3. Проверьте формат даты и содержимое файла Excel.`,
+            message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен в листе "${targetSheetName}" (метод поиска листа: ${findMethod}), но строка не найдена.\n\n3. Проверьте формат даты и содержимое файла Excel.\n\n4. Значения первых ячеек: ${firstColumnValues.slice(0, 5).join(', ')}...${comparisonInfo}`,
             filePath: fullPath,
             rowFound: false,
             cellUpdated: false
@@ -309,36 +482,20 @@ export class ExcelService {
   // Функция для обновления файла Excel на SharePoint с использованием современных методов
   private async updateExcelFile(serverRelativePath: string, fileData: ArrayBuffer): Promise<void> {
     try {
+      console.log(`Обновление файла по пути: ${serverRelativePath}`);
+      
       // Используем метод $value для установки содержимого файла
       const url = `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${serverRelativePath}')/$value`;
       
-      // Получаем токен запроса для редактирования
-      const digestResponse: SPHttpClientResponse = await this.context.spHttpClient.post(
-        `${kpfaExcelUrl}/_api/contextinfo`,
-        SPHttpClient.configurations.v1,
-        {
-          headers: {
-            'Accept': 'application/json;odata=nometadata'
-          }
-        }
-      );
-      
-      if (!digestResponse.ok) {
-        throw new Error(`Ошибка получения токена: ${digestResponse.status}`);
-      }
-      
-      const digestValue = (await digestResponse.json()).FormDigestValue;
-      
-      // Обновляем файл
-      const updateResponse: SPHttpClientResponse = await this.context.spHttpClient.post(
+      // Метод PUT без запроса токена
+      const updateResponse: SPHttpClientResponse = await this.context.spHttpClient.fetch(
         url,
         SPHttpClient.configurations.v1,
         {
+          method: 'PUT',
           headers: {
             'Accept': 'application/json;odata=nometadata',
-            'Content-Type': 'application/octet-stream',
-            'X-HTTP-Method': 'PUT',
-            'X-RequestDigest': digestValue
+            'Content-Type': 'application/octet-stream'
           },
           body: fileData
         }
@@ -377,8 +534,9 @@ export class ExcelService {
       const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       const month = monthNames[inputDate.getMonth()];
       
-      // Формируем итоговую строку
-      return `${day}${suffix} of ${month}`;
+      // Формируем итоговую строку и удаляем лишние пробелы
+      const result = `${day}${suffix} of ${month}`;
+      return result.trim();
     } catch (error) {
       console.error('Error converting date:', error);
       return "Invalid Date";
