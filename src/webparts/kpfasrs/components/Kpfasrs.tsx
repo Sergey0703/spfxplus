@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import styles from './Kpfasrs.module.scss';
 import { IKpfasrsProps } from './IKpfasrsProps';
 import { 
@@ -15,10 +15,10 @@ import {
   GroupHeader,
   IGroupHeaderProps,
   PrimaryButton,
+  DefaultButton,
   Dialog,
   DialogType,
-  DialogFooter,
-  DefaultButton
+  DialogFooter
 } from '@fluentui/react';
 import { SharePointService } from '../services/SharePointService';
 import { ExcelService, IExportToSRSItem, IStaffRecordsItem, IFileCheckResult } from '../services/ExcelService';
@@ -27,7 +27,7 @@ import { DataUtils } from '../services/DataUtils';
 const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
   // Состояния для ExportToSRS
   const [items, setItems] = useState<IExportToSRSItem[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   
   // Состояния для StaffRecords
   const [staffRecords, setStaffRecords] = useState<IStaffRecordsItem[]>([]);
@@ -105,25 +105,21 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     }
   });
   
-  // Загрузка данных из списка ExportToSRS при инициализации
-  useEffect(() => {
-    const loadExportToSRSItems = async (): Promise<void> => {
-      try {
-        setIsLoading(true);
-        setError(null);
-        
-        const loadedItems = await sharePointService.getExportToSRSItems();
-        setItems(loadedItems);
-      } catch (error) {
-        console.error('Error in loadExportToSRSItems:', error);
-        setError(`Ошибка: ${error.message}`);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadExportToSRSItems();
-  }, [sharePointService]);
+  // Новая функция для загрузки данных из ExportToSRS при нажатии на кнопку
+  const handleLoadExportToSRSItems = async (): Promise<void> => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const loadedItems = await sharePointService.getExportToSRSItems();
+      setItems(loadedItems);
+    } catch (error) {
+      console.error('Error in loadExportToSRSItems:', error);
+      setError(`Ошибка: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
   
   // Функция для обработки фильтрации StaffRecords
   const handleFilterStaffRecords = async (selectedExportItem: IExportToSRSItem): Promise<void> => {
@@ -165,7 +161,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
     }
   };
   
-  // Функция для обработки нажатия кнопки Export (теперь принимает groupKey - ключ группы, из которой нажали на экспорт)
+  // Функция для обработки нажатия кнопки Export (принимает groupKey - ключ группы, из которой нажали на экспорт)
   const handleExport = async (groupKey?: string): Promise<void> => {
     if (!selectedItem) {
       setDialogTitle('Ошибка экспорта');
@@ -281,6 +277,16 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
           <div className={styles.column}>
             <h2>ExportToSRS Data</h2>
             
+            {/* Кнопка для загрузки данных в первую таблицу */}
+            <div className={styles.buttonContainer}>
+              <PrimaryButton
+                text={isLoading ? "Загрузка..." : "Загрузить данные из ExportToSRS"}
+                onClick={handleLoadExportToSRSItems}
+                disabled={isLoading}
+                className={styles.loadButton}
+              />
+            </div>
+            
             {error && (
               <MessageBar
                 messageBarType={MessageBarType.error}
@@ -301,7 +307,7 @@ const Kpfasrs: React.FC<IKpfasrsProps> = (props) => {
                     messageBarType={MessageBarType.warning}
                     className={styles.warningMessage}
                   >
-                    No data found in the ExportToSRS list or you don't have permissions to access it.
+                    Нажмите кнопку "Загрузить данные из ExportToSRS" для отображения записей.
                   </MessageBar>
                 ) : (
                   <div className={styles.tableContainer}>
