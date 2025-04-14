@@ -1,6 +1,6 @@
 import { WebPartContext } from "@microsoft/sp-webpart-base";
 import { SPHttpClient, SPHttpClientResponse } from '@microsoft/sp-http';
-import * as XLSX from 'xlsx';
+import * as ExcelJS from 'exceljs';
 
 // Интерфейс для результата проверки файла
 export interface IFileCheckResult {
@@ -9,6 +9,7 @@ export interface IFileCheckResult {
   filePath?: string;
   rowFound?: boolean;
   rowNumber?: number;
+  cellUpdated?: boolean;
 }
 
 // Интерфейс для данных из списка ExportToSRS
@@ -147,10 +148,8 @@ export class ExcelService {
       }
       
       // Файл найден, теперь загружаем содержимое файла как бинарные данные
-      const fileContentUrl = `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${serverRelativePath}')/$value`;
-      
       const fileContentResponse: SPHttpClientResponse = await this.context.spHttpClient.get(
-        fileContentUrl,
+        `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${serverRelativePath}')/$value`,
         SPHttpClient.configurations.v1
       );
       
@@ -161,20 +160,23 @@ export class ExcelService {
         };
       }
       
-      // Получаем содержимое файла как массив байтов
+      // Получаем содержимое файла как ArrayBuffer
       const fileArrayBuffer = await fileContentResponse.arrayBuffer();
       
-      // Теперь мы можем использовать библиотеку SheetJS для работы с Excel файлом
-      try {        
-        // Загружаем книгу Excel
-        const workbook = XLSX.read(new Uint8Array(fileArrayBuffer), {type: 'array'});
+      // Теперь мы используем ExcelJS для работы с Excel файлом
+      try {
+        // Создаем новую книгу Excel
+        const workbook = new ExcelJS.Workbook();
+        
+        // Загружаем содержимое файла в книгу
+        await workbook.xlsx.load(fileArrayBuffer);
         
         // Выводим информацию о листах в книге для отладки
-        console.log('Листы в книге:', workbook.SheetNames);
+        console.log('Листы в книге:', workbook.worksheets.map(ws => ws.name));
         
         // Поиск листа по имени "2.Employee Data Entry"
         const targetSheetPattern = "2.Employee Data Entry";
-        let targetSheetName: string | null = null;
+        let targetWorksheet: ExcelJS.Worksheet | undefined;
         let findMethod = ""; // Переменная для хранения метода, которым был найден лист
         
         // Алгоритм поиска листа:
@@ -183,21 +185,16 @@ export class ExcelService {
         // 3. Если не нашли, берем второй лист
         
         // 1. Сначала пытаемся найти точное совпадение
-        for (let i = 0; i < workbook.SheetNames.length; i++) {
-          const sheetName = workbook.SheetNames[i];
-          if (sheetName === targetSheetPattern) {
-            targetSheetName = sheetName;
-            findMethod = "точное совпадение";
-            break;
-          }
+        targetWorksheet = workbook.getWorksheet(targetSheetPattern);
+        if (targetWorksheet) {
+          findMethod = "точное совпадение";
         }
         
         // 2. Если точное совпадение не найдено, ищем по началу строки
-        if (!targetSheetName) {
-          for (let i = 0; i < workbook.SheetNames.length; i++) {
-            const sheetName = workbook.SheetNames[i];
-            if (sheetName.indexOf("2.Employee") === 0) {
-              targetSheetName = sheetName;
+        if (!targetWorksheet) {
+          for (const worksheet of workbook.worksheets) {
+            if (worksheet.name.indexOf("2.Employee") === 0) {
+              targetWorksheet = worksheet;
               findMethod = "частичное совпадение (по началу имени)";
               break;
             }
@@ -205,67 +202,86 @@ export class ExcelService {
         }
         
         // 3. Если совпадение по имени не найдено, берем второй лист (индекс 1)
-        if (!targetSheetName && workbook.SheetNames.length > 1) {
-          targetSheetName = workbook.SheetNames[1];
+        if (!targetWorksheet && workbook.worksheets.length > 1) {
+          targetWorksheet = workbook.worksheets[1];
           findMethod = "использован второй лист";
-          console.log(`Лист "${targetSheetPattern}" не найден. Используем второй лист: "${targetSheetName}"`);
+          console.log(`Лист "${targetSheetPattern}" не найден. Используем второй лист: "${targetWorksheet.name}"`);
         }
         
         // Если нет подходящего листа, возвращаем ошибку
-        if (!targetSheetName) {
+        if (!targetWorksheet) {
           return {
             success: true,
-            message: `Файл найден, но подходящий лист не найден. Доступные листы: ${workbook.SheetNames.join(", ")}. Поиск строки: "${dateForSearch}".`,
+            message: `Файл найден, но подходящий лист не найден. Доступные листы: ${workbook.worksheets.map(ws => ws.name).join(", ")}. Поиск строки: "${dateForSearch}".`,
             filePath: fullPath,
             rowFound: false
           };
         }
         
+        const targetSheetName = targetWorksheet.name;
         console.log(`Используем лист: "${targetSheetName}" (метод поиска: ${findMethod})`);
-        
-        const worksheet = workbook.Sheets[targetSheetName];
-        
-        // Преобразуем лист в массив объектов
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: ""});
-        
-        console.log(`Поиск строки с текстом "${dateForSearch}" в колонке A`);
         
         // Ищем строку, где в колонке A находится искомая дата
         let rowFound = false;
         let rowNumber = -1;
         
-        for (let i = 0; i < jsonData.length; i++) {
-          const row = jsonData[i] as any[];
+        // Перебираем строки в листе
+        targetWorksheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
+          // Получаем значение в первой ячейке (колонка A)
+          const cellValue = row.getCell(1).text;
           
-          // Проверяем первую ячейку (колонка A)
-          if (row && row.length > 0 && typeof row[0] === 'string') {
-            const cellValue = row[0].trim();
-            
-            console.log(`Проверка строки ${i + 1}, значение: "${cellValue}"`);
-            
-            if (cellValue === dateForSearch) {
-              rowFound = true;
-              rowNumber = i + 1; // +1 т.к. нумерация строк в Excel начинается с 1
-              console.log(`Строка найдена! Номер строки: ${rowNumber}`);
-              break;
-            }
+          console.log(`Проверка строки ${rowNum}, значение: "${cellValue}"`);
+          
+          if (cellValue === dateForSearch) {
+            rowFound = true;
+            rowNumber = rowNum;
+            console.log(`Строка найдена! Номер строки: ${rowNumber}`);
+            // Прерываем итерацию, так как строка найдена
+            return false;
           }
-        }
+        });
         
         if (rowFound) {
-          return {
-            success: true,
-            message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}" (метод поиска листа: ${findMethod}).\n\n3. Строка найдена в позиции ${rowNumber}.`,
-            filePath: fullPath,
-            rowFound: true,
-            rowNumber: rowNumber
-          };
+          // Если строка найдена, записываем время "20:20" в ячейку B этой строки
+          try {
+            // Получаем ячейку B в найденной строке
+            const cell = targetWorksheet.getRow(rowNumber).getCell(2);
+            
+            // Устанавливаем значение ячейки
+            cell.value = "20:20";
+            
+            // Сохраняем изменения обратно в файл
+            const updatedContent = await workbook.xlsx.writeBuffer();
+            
+            // Отправляем обновленный файл на SharePoint
+            await this.updateExcelFile(serverRelativePath, updatedContent);
+            
+            return {
+              success: true,
+              message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}" (метод поиска листа: ${findMethod}).\n\n3. Строка найдена в позиции ${rowNumber}.\n\n4. Значение "20:20" записано в ячейку B${rowNumber} и файл успешно обновлен.`,
+              filePath: fullPath,
+              rowFound: true,
+              rowNumber: rowNumber,
+              cellUpdated: true
+            };
+          } catch (error) {
+            console.error('Error updating cell:', error);
+            return {
+              success: true,
+              message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен успешно в листе "${targetSheetName}" (метод поиска листа: ${findMethod}).\n\n3. Строка найдена в позиции ${rowNumber}.\n\n4. Не удалось записать значение в ячейку B${rowNumber}: ${error.message}`,
+              filePath: fullPath,
+              rowFound: true,
+              rowNumber: rowNumber,
+              cellUpdated: false
+            };
+          }
         } else {
           return {
             success: true,
             message: `1. Файл успешно найден по пути: ${fullPath}\n\n2. Поиск строки с датой "${dateForSearch}" (${dateSource}) выполнен в листе "${targetSheetName}" (метод поиска листа: ${findMethod}), но строка не найдена.\n\n3. Проверьте формат даты и содержимое файла Excel.`,
             filePath: fullPath,
-            rowFound: false
+            rowFound: false,
+            cellUpdated: false
           };
         }
         
@@ -275,7 +291,8 @@ export class ExcelService {
           success: true,
           message: `Файл успешно найден, но произошла ошибка при анализе содержимого Excel: ${error.message}. Поиск строки: "${dateForSearch}".`,
           filePath: fullPath,
-          rowFound: false
+          rowFound: false,
+          cellUpdated: false
         };
       }
       
@@ -283,8 +300,60 @@ export class ExcelService {
       console.error('Error in checkExcelFile:', error);
       return {
         success: false,
-        message: `Ошибка при проверке файла: ${error.message}`
+        message: `Ошибка при проверке файла: ${error.message}`,
+        cellUpdated: false
       };
+    }
+  }
+
+  // Функция для обновления файла Excel на SharePoint с использованием современных методов
+  private async updateExcelFile(serverRelativePath: string, fileData: ArrayBuffer): Promise<void> {
+    try {
+      // Используем метод $value для установки содержимого файла
+      const url = `${kpfaExcelUrl}/_api/web/GetFileByServerRelativeUrl('${serverRelativePath}')/$value`;
+      
+      // Получаем токен запроса для редактирования
+      const digestResponse: SPHttpClientResponse = await this.context.spHttpClient.post(
+        `${kpfaExcelUrl}/_api/contextinfo`,
+        SPHttpClient.configurations.v1,
+        {
+          headers: {
+            'Accept': 'application/json;odata=nometadata'
+          }
+        }
+      );
+      
+      if (!digestResponse.ok) {
+        throw new Error(`Ошибка получения токена: ${digestResponse.status}`);
+      }
+      
+      const digestValue = (await digestResponse.json()).FormDigestValue;
+      
+      // Обновляем файл
+      const updateResponse: SPHttpClientResponse = await this.context.spHttpClient.post(
+        url,
+        SPHttpClient.configurations.v1,
+        {
+          headers: {
+            'Accept': 'application/json;odata=nometadata',
+            'Content-Type': 'application/octet-stream',
+            'X-HTTP-Method': 'PUT',
+            'X-RequestDigest': digestValue
+          },
+          body: fileData
+        }
+      );
+      
+      if (!updateResponse.ok) {
+        const errorText = await updateResponse.text();
+        console.error('Error updating file:', updateResponse.status, errorText);
+        throw new Error(`Ошибка обновления файла: ${updateResponse.status} ${updateResponse.statusText}`);
+      }
+      
+      console.log('Файл успешно обновлен.');
+    } catch (error) {
+      console.error('Error in updateExcelFile:', error);
+      throw error;
     }
   }
 
