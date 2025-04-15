@@ -248,58 +248,71 @@ export class SharePointService {
     };
   }
 
-  // Функция для отправки email через SharePoint
-  public async sendEmail(to: string[], subject: string, body: string): Promise<boolean> {
-    try {
-      // URL для REST API SharePoint для отправки электронной почты
-      const emailUrl = `${this.context.pageContext.web.absoluteUrl}/_api/SP.Utilities.Utility.SendEmail`;
-      
-      // Формируем данные для запроса
-      const emailProps = {
-        properties: {
-          __metadata: { type: 'SP.Utilities.EmailProperties' },
-          To: { results: to },
-          Subject: subject,
-          Body: body
-        }
-      };
-      
-      // Получаем токен формы
-      const digestResponse = await this.context.spHttpClient.post(
-        `${this.context.pageContext.web.absoluteUrl}/_api/contextinfo`,
-        SPHttpClient.configurations.v1,
-        {
-          headers: {
-            'Accept': 'application/json;odata=nometadata'
-          }
-        }
-      );
-      
-      if (!digestResponse.ok) {
-        console.error(`Error getting digest: ${digestResponse.status}`);
-        return false;
-      }
-      
-      const digestValue = (await digestResponse.json()).FormDigestValue;
-      
-      // Отправляем запрос на отправку письма
-      const emailResponse = await this.context.spHttpClient.post(
-        emailUrl,
-        SPHttpClient.configurations.v1,
-        {
-          headers: {
-            'Accept': 'application/json;odata=nometadata',
-            'Content-Type': 'application/json;odata=verbose',
-            'X-RequestDigest': digestValue
-          },
-          body: JSON.stringify(emailProps)
-        }
-      );
-      
-      return emailResponse.ok;
-    } catch (error) {
-      console.error('Error sending email:', error);
+  // Функция для отправки email через Microsoft Graph API
+// Функция для отправки email через SharePoint REST API
+public async sendEmail(to: string[], subject: string, body: string): Promise<boolean> {
+  try {
+    // Проверяем, что у нас есть хотя бы один получатель
+    if (!to || to.length === 0) {
+      console.error('No recipients specified for email');
       return false;
     }
+
+    // Формируем запрос напрямую через REST API
+    const emailUrl = `${this.context.pageContext.web.absoluteUrl}/_api/SP.Utilities.Utility.SendEmail`;
+    
+    // Получаем токен формы напрямую
+    const digestUrl = `${this.context.pageContext.web.absoluteUrl}/_api/contextinfo`;
+    
+    // Получаем digest
+    const digestResponse = await fetch(digestUrl, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json;odata=verbose'
+      },
+      credentials: 'include'
+    });
+    
+    if (!digestResponse.ok) {
+      throw new Error(`Failed to get request digest: ${digestResponse.status}`);
+    }
+    
+    const digestResult = await digestResponse.json();
+    const formDigestValue = digestResult.d.GetContextWebInformation.FormDigestValue;
+    
+    // Формируем тело запроса
+    const emailData = {
+      'properties': {
+        '__metadata': { 'type': 'SP.Utilities.EmailProperties' },
+        'To': { 'results': to },
+        'Subject': subject,
+        'Body': body
+      }
+    };
+    
+    // Отправляем запрос
+    const emailResponse = await fetch(emailUrl, {
+      method: 'POST',
+      body: JSON.stringify(emailData),
+      headers: {
+        'Accept': 'application/json;odata=verbose',
+        'Content-Type': 'application/json;odata=verbose',
+        'X-RequestDigest': formDigestValue
+      },
+      credentials: 'include'
+    });
+    
+    if (!emailResponse.ok) {
+      throw new Error(`Failed to send email: ${emailResponse.status}`);
+    }
+    
+    console.log('Email sent successfully via SharePoint REST API');
+    return true;
+  } catch (error) {
+    console.error('Error sending email:', error);
+    return false;
   }
+}
+
+
 }

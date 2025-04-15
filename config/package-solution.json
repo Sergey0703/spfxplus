@@ -37,6 +37,10 @@
       {
         "resource": "Microsoft.SharePoint",
         "scope": "Sites.Read.All"
+      },
+      {
+        "resource": "Microsoft Graph",
+        "scope": "Mail.Send"
       }
     ]
   },
